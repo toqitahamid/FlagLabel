@@ -17,7 +17,15 @@ Grab the latest installer from the [Releases](https://github.com/toqitahamid/Fla
 **macOS** (Apple Silicon): `FlagLabel_<version>_aarch64.dmg`
 
 1. Open the `.dmg` and drag `FlagLabel.app` into `/Applications`.
-2. First launch only: right-click the app in `/Applications` → **Open** → **Open anyway**. macOS blocks unsigned apps by default; this exception is remembered.
+2. Remove the quarantine flag macOS adds to anything downloaded from the web:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/FlagLabel.app
+   ```
+
+   Without this, macOS will refuse to open the app with *"FlagLabel is damaged and can't be opened"* — FlagLabel isn't notarized with an Apple Developer ID, so Gatekeeper blocks it on first launch.
+
+3. Double-click to open. If you skipped step 2, you can still launch it via **System Settings → Privacy & Security → Open Anyway** after the block dialog appears.
 
 **Windows** (x64): `FlagLabel_<version>_x64-setup.exe` or `FlagLabel_<version>_x64_en-US.msi`
 
