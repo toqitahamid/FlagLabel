@@ -92,6 +92,23 @@ function countsFromClicks(cs: Click[]): Counts {
   return out;
 }
 
+const HIT_TEST_RADIUS_IMG_PX = 20;
+
+function hitTestClick(u: number, v: number, cs: Click[]): number | null {
+  let bestIdx: number | null = null;
+  let bestD2 = HIT_TEST_RADIUS_IMG_PX * HIT_TEST_RADIUS_IMG_PX;
+  for (let i = 0; i < cs.length; i++) {
+    const dx = cs[i].u - u;
+    const dy = cs[i].v - v;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 function buildClickFile(
   image: LoadedImage,
   clicks: Click[],
@@ -157,6 +174,11 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
     rows: [
       ["Undo last click", "⌘Z"],
       ["Clear all (current image)", "clear all link"],
+      ["Select a click (click on its dot)", "mouse"],
+      ["Remove selected click", "Del / ⌫"],
+      ["Retag selected click L / C / R", "1 / 2 / 3"],
+      ["Adjust selected click distance", "↑ / ↓"],
+      ["Deselect", "Esc"],
     ],
   },
   {
@@ -356,6 +378,7 @@ function App() {
   const [image, setImage] = useState<LoadedImage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clicks, setClicks] = useState<Click[]>([]);
+  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [zoomRadius, setZoomRadius] = useState<number>(ZOOM_DEFAULT);
 
@@ -424,6 +447,7 @@ function App() {
       img.onload = () => {
         imgRef.current = img;
         setClicks([]);
+        setSelectedIdx(null);
         setCursor(null);
         setCurrentDistance(1);
         setDirty(false);
@@ -741,6 +765,7 @@ function App() {
       if (prev.length === 0) return prev;
       return prev.slice(0, -1);
     });
+    setSelectedIdx(null);
     setDirty(true);
   }, []);
 
@@ -754,9 +779,46 @@ function App() {
     );
     if (ok) {
       setClicks([]);
+      setSelectedIdx(null);
       setDirty(true);
     }
   }, [clicks.length]);
+
+  const deleteSelected = useCallback(() => {
+    if (selectedIdx === null) return;
+    setClicks((prev) => prev.filter((_, i) => i !== selectedIdx));
+    setSelectedIdx(null);
+    setDirty(true);
+  }, [selectedIdx]);
+
+  const retagSelected = useCallback(
+    (t: Transect) => {
+      if (selectedIdx === null) return;
+      setClicks((prev) =>
+        prev.map((c, i) => (i === selectedIdx ? { ...c, transect: t } : c))
+      );
+      setDirty(true);
+    },
+    [selectedIdx]
+  );
+
+  const adjustSelectedDistance = useCallback(
+    (delta: number) => {
+      if (selectedIdx === null) return;
+      setClicks((prev) =>
+        prev.map((c, i) => {
+          if (i !== selectedIdx) return c;
+          const nd = Math.max(
+            0,
+            Math.min(99.9, +(c.distance + delta).toFixed(1))
+          );
+          return { ...c, distance: nd };
+        })
+      );
+      setDirty(true);
+    },
+    [selectedIdx]
+  );
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -769,6 +831,11 @@ function App() {
         if (showHelp) {
           e.preventDefault();
           setShowHelp(false);
+          return;
+        }
+        if (selectedIdx !== null) {
+          e.preventDefault();
+          setSelectedIdx(null);
           return;
         }
       }
@@ -786,6 +853,15 @@ function App() {
         return;
       }
 
+      if (
+        selectedIdx !== null &&
+        (e.key === "Delete" || e.key === "Backspace")
+      ) {
+        e.preventDefault();
+        deleteSelected();
+        return;
+      }
+
       if (cmd && e.key.toLowerCase() === "z") {
         e.preventDefault();
         handleUndo();
@@ -797,21 +873,26 @@ function App() {
         navigateBy(1);
       } else if (e.key === "1") {
         e.preventDefault();
-        setCurrentTransect("L");
+        if (selectedIdx !== null) retagSelected("L");
+        else setCurrentTransect("L");
       } else if (e.key === "2") {
         e.preventDefault();
-        setCurrentTransect("C");
+        if (selectedIdx !== null) retagSelected("C");
+        else setCurrentTransect("C");
       } else if (e.key === "3") {
         e.preventDefault();
-        setCurrentTransect("R");
+        if (selectedIdx !== null) retagSelected("R");
+        else setCurrentTransect("R");
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         const step = e.shiftKey ? 0.5 : 1;
-        setCurrentDistance((d) => Math.min(99.9, +(d + step).toFixed(1)));
+        if (selectedIdx !== null) adjustSelectedDistance(step);
+        else setCurrentDistance((d) => Math.min(99.9, +(d + step).toFixed(1)));
       } else if (e.key === "ArrowDown") {
         e.preventDefault();
         const step = e.shiftKey ? 0.5 : 1;
-        setCurrentDistance((d) => Math.max(0, +(d - step).toFixed(1)));
+        if (selectedIdx !== null) adjustSelectedDistance(-step);
+        else setCurrentDistance((d) => Math.max(0, +(d - step).toFixed(1)));
       } else if (e.key === " ") {
         e.preventDefault();
         setAutoAdvance((a) => !a);
@@ -825,7 +906,16 @@ function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleUndo, navigateBy, folderImages.length, showHelp]);
+  }, [
+    handleUndo,
+    navigateBy,
+    folderImages.length,
+    showHelp,
+    selectedIdx,
+    deleteSelected,
+    retagSelected,
+    adjustSelectedDistance,
+  ]);
 
   // Main canvas
   useEffect(() => {
@@ -865,13 +955,24 @@ function App() {
         const y = offsetY + c.v * scale;
         drawMarker(ctx, x, y, c, 1);
       }
+
+      if (selectedIdx !== null && clicks[selectedIdx]) {
+        const sc = clicks[selectedIdx];
+        const x = offsetX + sc.u * scale;
+        const y = offsetY + sc.v * scale;
+        ctx.beginPath();
+        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
     }
 
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [image, clicks]);
+  }, [image, clicks, selectedIdx]);
 
   // Zoom panel
   useEffect(() => {
@@ -913,6 +1014,19 @@ function App() {
       drawMarker(ctx, x, y, c, zoomScale);
     }
 
+    if (selectedIdx !== null && clicks[selectedIdx]) {
+      const sc = clicks[selectedIdx];
+      if (sc.u >= sx && sc.u <= sx + sw && sc.v >= sy && sc.v <= sy + sh) {
+        const x = (sc.u - sx) * zoomScale;
+        const y = (sc.v - sy) * zoomScale;
+        ctx.beginPath();
+        ctx.arc(x, y, 14, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
     ctx.strokeStyle = CROSSHAIR_COLOR;
     ctx.lineWidth = 0.6;
     ctx.globalAlpha = 0.7;
@@ -923,7 +1037,7 @@ function App() {
     ctx.lineTo(cssW / 2, cssH);
     ctx.stroke();
     ctx.globalAlpha = 1;
-  }, [image, clicks, cursor, zoomRadius]);
+  }, [image, clicks, cursor, zoomRadius, selectedIdx]);
 
   const mainCanvasEventToImageCoords = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>): Cursor | null => {
@@ -978,9 +1092,18 @@ function App() {
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const p = mainCanvasEventToImageCoords(e);
       if (!p) return;
+      const hit = hitTestClick(p.u, p.v, clicks);
+      if (hit !== null) {
+        setSelectedIdx(hit);
+        return;
+      }
+      if (selectedIdx !== null) {
+        setSelectedIdx(null);
+        return;
+      }
       addClickAt(p.u, p.v);
     },
-    [mainCanvasEventToImageCoords, addClickAt]
+    [mainCanvasEventToImageCoords, addClickAt, clicks, selectedIdx]
   );
 
   const handleCanvasMove = useCallback(
@@ -1008,9 +1131,18 @@ function App() {
       const sh = 2 * r;
       const u = sx + (zx / ZOOM_PANEL_PX) * sw;
       const v = sy + (zy / ZOOM_PANEL_PX) * sh;
+      const hit = hitTestClick(u, v, clicks);
+      if (hit !== null) {
+        setSelectedIdx(hit);
+        return;
+      }
+      if (selectedIdx !== null) {
+        setSelectedIdx(null);
+        return;
+      }
       addClickAt(u, v);
     },
-    [image, cursor, zoomRadius, addClickAt]
+    [image, cursor, zoomRadius, addClickAt, clicks, selectedIdx]
   );
 
   const counts: Record<Transect, number> = { L: 0, C: 0, R: 0 };
@@ -1329,6 +1461,24 @@ function App() {
               <>
                 <span className="sep">·</span>
                 <span>{saveStateText}</span>
+              </>
+            )}
+            {selectedIdx !== null && clicks[selectedIdx] && (
+              <>
+                <span className="sep">·</span>
+                <span className="selection-info">
+                  selected #{selectedIdx + 1}:{" "}
+                  <span
+                    style={{
+                      color: TRANSECT_COLORS[clicks[selectedIdx].transect],
+                    }}
+                  >
+                    {clicks[selectedIdx].transect}
+                    {fmtDistance(clicks[selectedIdx].distance)}m
+                  </span>{" "}
+                  — <kbd>Del</kbd> remove, <kbd>1/2/3</kbd> retag,{" "}
+                  <kbd>↑↓</kbd> distance, <kbd>Esc</kbd> deselect
+                </span>
               </>
             )}
           </>
