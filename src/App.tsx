@@ -8,6 +8,7 @@ import {
   Submenu,
 } from "@tauri-apps/api/menu";
 import { ask, open } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { Store } from "@tauri-apps/plugin-store";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
@@ -92,11 +93,46 @@ function countsFromClicks(cs: Click[]): Counts {
   return out;
 }
 
-const HIT_TEST_RADIUS_IMG_PX = 20;
+const VIEW_SCALE_MIN = 1;
+const VIEW_SCALE_MAX = 10;
+const WHEEL_ZOOM_RATE = 0.0015;
 
-function hitTestClick(u: number, v: number, cs: Click[]): number | null {
+function computeViewParams(
+  iw: number,
+  ih: number,
+  viewScale: number,
+  viewPanX: number,
+  viewPanY: number,
+  cw: number,
+  ch: number
+) {
+  const fitScale = Math.min(cw / iw, ch / ih);
+  const effScale = fitScale * viewScale;
+  const drawW = iw * effScale;
+  const drawH = ih * effScale;
+  const offsetX = (cw - drawW) / 2 + viewPanX;
+  const offsetY = (ch - drawH) / 2 + viewPanY;
+  return { fitScale, effScale, drawW, drawH, offsetX, offsetY };
+}
+
+function clampPan(pan: number, drawSize: number, canvasSize: number): number {
+  const maxPan = Math.max(0, (drawSize - canvasSize) / 2);
+  return Math.max(-maxPan, Math.min(maxPan, pan));
+}
+
+const HIT_TEST_RADIUS_CSS_PX = 12;
+
+function hitTestClick(
+  u: number,
+  v: number,
+  cs: Click[],
+  effScale: number
+): number | null {
+  // Radius converted into image space so the on-screen target stays roughly
+  // constant regardless of zoom level.
+  const radiusImg = HIT_TEST_RADIUS_CSS_PX / effScale;
   let bestIdx: number | null = null;
-  let bestD2 = HIT_TEST_RADIUS_IMG_PX * HIT_TEST_RADIUS_IMG_PX;
+  let bestD2 = radiusImg * radiusImg;
   for (let i = 0; i < cs.length; i++) {
     const dx = cs[i].u - u;
     const dy = cs[i].v - v;
@@ -166,7 +202,7 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
-      ["Toggle auto-advance 1→15", "space"],
+      ["Toggle auto-advance 1→15", "a"],
     ],
   },
   {
@@ -184,7 +220,11 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: "View",
     rows: [
-      ["Zoom radius − / +", "[ / ]"],
+      ["Zoom main image (at cursor)", "scroll / pinch"],
+      ["Zoom main image (centered)", "= / −"],
+      ["Reset zoom & pan", "0"],
+      ["Pan when zoomed in", "hold Space + drag"],
+      ["Zoom panel radius − / +", "[ / ]"],
     ],
   },
   {
@@ -353,7 +393,7 @@ function drawMarker(
   scale: number
 ) {
   const color = TRANSECT_COLORS[c.transect];
-  const r = Math.max(4, Math.min(7, 5 * Math.sqrt(scale)));
+  const r = Math.max(4, Math.min(12, 5 * Math.sqrt(scale)));
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fillStyle = color;
@@ -381,6 +421,21 @@ function App() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [zoomRadius, setZoomRadius] = useState<number>(ZOOM_DEFAULT);
+
+  // Main-image view transform: viewScale = multiplier on top of fit scale.
+  // viewPanX/Y = pan offset in CSS pixels (independent of zoom level).
+  const [viewScale, setViewScale] = useState<number>(1);
+  const [viewPanX, setViewPanX] = useState<number>(0);
+  const [viewPanY, setViewPanY] = useState<number>(0);
+  const [spaceDown, setSpaceDown] = useState<boolean>(false);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const panStateRef = useRef<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
+  const suppressNextClickRef = useRef<boolean>(false);
 
   const [currentTransect, setCurrentTransect] = useState<Transect>("L");
   const [currentDistance, setCurrentDistance] = useState<number>(1);
@@ -421,18 +476,18 @@ function App() {
     })();
   }, []);
 
-  // OTA: check for updates on launch (M7 — log only, no UI yet)
   useEffect(() => {
     (async () => {
       try {
         const update = await check();
-        if (update) {
-          console.log(
-            `[updater] update available: ${update.version} (current: ${update.currentVersion})`
-          );
-        } else {
-          console.log("[updater] no updates available");
-        }
+        if (!update) return;
+        const accept = await ask(
+          `FlagLabel ${update.version} is available (you have ${update.currentVersion}).\n\nDownload and install now? The app will restart.`,
+          { title: "Update available", kind: "info", okLabel: "Install", cancelLabel: "Later" }
+        );
+        if (!accept) return;
+        await update.downloadAndInstall();
+        await relaunch();
       } catch (e) {
         console.log("[updater] check failed:", e);
       }
@@ -452,6 +507,9 @@ function App() {
         setCurrentDistance(1);
         setDirty(false);
         setLastSavedAt(null);
+        setViewScale(1);
+        setViewPanX(0);
+        setViewPanY(0);
         setImage({
           path,
           url,
@@ -820,10 +878,108 @@ function App() {
     [selectedIdx]
   );
 
+  const resetView = useCallback(() => {
+    setViewScale(1);
+    setViewPanX(0);
+    setViewPanY(0);
+  }, []);
+
+  const zoomByFactor = useCallback(
+    (factor: number) => {
+      if (!image || !containerRef.current) return;
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      const newScale = Math.max(
+        VIEW_SCALE_MIN,
+        Math.min(VIEW_SCALE_MAX, viewScale * factor)
+      );
+      if (newScale === viewScale) return;
+
+      const before = computeViewParams(
+        image.width,
+        image.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
+      const after = computeViewParams(
+        image.width,
+        image.height,
+        newScale,
+        0,
+        0,
+        cw,
+        ch
+      );
+
+      // Anchor zoom at the last known cursor position, fall back to center.
+      let cssX: number;
+      let cssY: number;
+      let imgU: number;
+      let imgV: number;
+      if (cursor) {
+        imgU = cursor.u;
+        imgV = cursor.v;
+        cssX = before.offsetX + imgU * before.effScale;
+        cssY = before.offsetY + imgV * before.effScale;
+      } else {
+        cssX = cw / 2;
+        cssY = ch / 2;
+        imgU = (cssX - before.offsetX) / before.effScale;
+        imgV = (cssY - before.offsetY) / before.effScale;
+      }
+
+      const newPanX = cssX - (cw - after.drawW) / 2 - imgU * after.effScale;
+      const newPanY = cssY - (ch - after.drawH) / 2 - imgV * after.effScale;
+
+      setViewScale(newScale);
+      setViewPanX(clampPan(newPanX, after.drawW, cw));
+      setViewPanY(clampPan(newPanY, after.drawH, ch));
+    },
+    [image, viewScale, viewPanX, viewPanY, cursor]
+  );
+
+  useEffect(() => {
+    function endPanState() {
+      setSpaceDown(false);
+      setIsDragging(false);
+      panStateRef.current = null;
+    }
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space") {
+        // Ending pan on Space release: keep suppressNextClickRef as-is so an
+        // in-flight mouseup still suppresses the click.
+        endPanState();
+      }
+    }
+    function onBlur() {
+      // Window lost focus (alt-tab, system dialog) — clear everything,
+      // including the click-suppress flag.
+      endPanState();
+      suppressNextClickRef.current = false;
+    }
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const inInput = e.target instanceof HTMLInputElement;
       const cmd = e.metaKey || e.ctrlKey;
+
+      // Track Space for pan-mode (when not in an input). Prevent default so
+      // browser doesn't scroll the page on space.
+      if (e.code === "Space" && !inInput) {
+        e.preventDefault();
+        setSpaceDown(true);
+        return;
+      }
 
       // ⌘O / ⌘⇧O / ⌘S are bound by the native menu accelerators.
       // ⌘Z stays here because it must skip text inputs (browser undo).
@@ -893,7 +1049,7 @@ function App() {
         const step = e.shiftKey ? 0.5 : 1;
         if (selectedIdx !== null) adjustSelectedDistance(-step);
         else setCurrentDistance((d) => Math.max(0, +(d - step).toFixed(1)));
-      } else if (e.key === " ") {
+      } else if (e.key.toLowerCase() === "a" && !cmd) {
         e.preventDefault();
         setAutoAdvance((a) => !a);
       } else if (e.key === "[") {
@@ -902,6 +1058,15 @@ function App() {
       } else if (e.key === "]") {
         e.preventDefault();
         setZoomRadius((r) => Math.min(ZOOM_MAX, r + 5));
+      } else if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomByFactor(1.25);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomByFactor(1 / 1.25);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        resetView();
       }
     }
     window.addEventListener("keydown", onKey);
@@ -915,6 +1080,8 @@ function App() {
     deleteSelected,
     retagSelected,
     adjustSelectedDistance,
+    zoomByFactor,
+    resetView,
   ]);
 
   // Main canvas
@@ -932,11 +1099,15 @@ function App() {
       if (cw === 0 || ch === 0) return;
       const dpr = window.devicePixelRatio || 1;
 
-      const scale = Math.min(cw / image!.width, ch / image!.height);
-      const drawW = image!.width * scale;
-      const drawH = image!.height * scale;
-      const offsetX = (cw - drawW) / 2;
-      const offsetY = (ch - drawH) / 2;
+      const { effScale, drawW, drawH, offsetX, offsetY } = computeViewParams(
+        image!.width,
+        image!.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
 
       canvas.width = Math.round(cw * dpr);
       canvas.height = Math.round(ch * dpr);
@@ -951,17 +1122,17 @@ function App() {
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
 
       for (const c of clicks) {
-        const x = offsetX + c.u * scale;
-        const y = offsetY + c.v * scale;
-        drawMarker(ctx, x, y, c, 1);
+        const x = offsetX + c.u * effScale;
+        const y = offsetY + c.v * effScale;
+        drawMarker(ctx, x, y, c, viewScale);
       }
 
       if (selectedIdx !== null && clicks[selectedIdx]) {
         const sc = clicks[selectedIdx];
-        const x = offsetX + sc.u * scale;
-        const y = offsetY + sc.v * scale;
+        const x = offsetX + sc.u * effScale;
+        const y = offsetY + sc.v * effScale;
         ctx.beginPath();
-        ctx.arc(x, y, 10, 0, Math.PI * 2);
+        ctx.arc(x, y, 10 + 2 * viewScale, 0, Math.PI * 2);
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 2;
         ctx.stroke();
@@ -972,7 +1143,7 @@ function App() {
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [image, clicks, selectedIdx]);
+  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY]);
 
   // Zoom panel
   useEffect(() => {
@@ -1049,11 +1220,15 @@ function App() {
       const cssY = e.clientY - rect.top;
       const cw = container.clientWidth;
       const ch = container.clientHeight;
-      const scale = Math.min(cw / image.width, ch / image.height);
-      const drawW = image.width * scale;
-      const drawH = image.height * scale;
-      const offsetX = (cw - drawW) / 2;
-      const offsetY = (ch - drawH) / 2;
+      const { effScale, drawW, drawH, offsetX, offsetY } = computeViewParams(
+        image.width,
+        image.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
       if (
         cssX < offsetX ||
         cssX > offsetX + drawW ||
@@ -1063,11 +1238,11 @@ function App() {
         return null;
       }
       return {
-        u: (cssX - offsetX) / scale,
-        v: (cssY - offsetY) / scale,
+        u: (cssX - offsetX) / effScale,
+        v: (cssY - offsetY) / effScale,
       };
     },
-    [image]
+    [image, viewScale, viewPanX, viewPanY]
   );
 
   const addClickAt = useCallback(
@@ -1091,8 +1266,19 @@ function App() {
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const p = mainCanvasEventToImageCoords(e);
-      if (!p) return;
-      const hit = hitTestClick(p.u, p.v, clicks);
+      if (!p || !image || !containerRef.current) return;
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      const { effScale } = computeViewParams(
+        image.width,
+        image.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
+      const hit = hitTestClick(p.u, p.v, clicks, effScale);
       if (hit !== null) {
         setSelectedIdx(hit);
         return;
@@ -1103,17 +1289,136 @@ function App() {
       }
       addClickAt(p.u, p.v);
     },
-    [mainCanvasEventToImageCoords, addClickAt, clicks, selectedIdx]
+    [
+      mainCanvasEventToImageCoords,
+      addClickAt,
+      clicks,
+      selectedIdx,
+      image,
+      viewScale,
+      viewPanX,
+      viewPanY,
+    ]
   );
 
   const handleCanvasMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (panStateRef.current) {
+        const dx = e.clientX - panStateRef.current.x;
+        const dy = e.clientY - panStateRef.current.y;
+        const cw = containerRef.current?.clientWidth ?? 0;
+        const ch = containerRef.current?.clientHeight ?? 0;
+        if (image) {
+          const { drawW, drawH } = computeViewParams(
+            image.width,
+            image.height,
+            viewScale,
+            0,
+            0,
+            cw,
+            ch
+          );
+          setViewPanX(clampPan(panStateRef.current.panX + dx, drawW, cw));
+          setViewPanY(clampPan(panStateRef.current.panY + dy, drawH, ch));
+        }
+        return;
+      }
       const p = mainCanvasEventToImageCoords(e);
       if (!p) return;
       setCursor(p);
     },
-    [mainCanvasEventToImageCoords]
+    [mainCanvasEventToImageCoords, image, viewScale]
   );
+
+  const handleCanvasMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      // If space is held, suppress the subsequent click (the user is panning,
+      // not marking). Pan only starts when zoomed in, but we still want to
+      // eat the click at 1× so an aborted pan doesn't drop a marker.
+      if (spaceDown) {
+        suppressNextClickRef.current = true;
+      }
+      if (spaceDown && viewScale > 1) {
+        e.preventDefault();
+        panStateRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          panX: viewPanX,
+          panY: viewPanY,
+        };
+        setIsDragging(true);
+      }
+    },
+    [spaceDown, viewScale, viewPanX, viewPanY]
+  );
+
+  const endPan = useCallback(() => {
+    panStateRef.current = null;
+    setIsDragging(false);
+  }, []);
+
+  const handleCanvasWheel = useCallback(
+    (e: WheelEvent) => {
+      if (!image || !containerRef.current || !canvasRef.current) return;
+      e.preventDefault();
+      const canvas = canvasRef.current;
+      const container = containerRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+      const cw = container.clientWidth;
+      const ch = container.clientHeight;
+
+      // Trackpad pinch gives ctrlKey=true with a larger deltaY; mouse wheel
+      // gives plain deltaY. Same formula works for both — rate just tunes feel.
+      const factor = Math.exp(-e.deltaY * WHEEL_ZOOM_RATE);
+      const newScale = Math.max(
+        VIEW_SCALE_MIN,
+        Math.min(VIEW_SCALE_MAX, viewScale * factor)
+      );
+      if (newScale === viewScale) return;
+
+      // Zoom-at-cursor: keep the image-pixel under the cursor stationary.
+      const before = computeViewParams(
+        image.width,
+        image.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
+      const imgU = (cssX - before.offsetX) / before.effScale;
+      const imgV = (cssY - before.offsetY) / before.effScale;
+
+      const after = computeViewParams(
+        image.width,
+        image.height,
+        newScale,
+        0,
+        0,
+        cw,
+        ch
+      );
+      // We want: cssX = after.offsetX + viewPanX_new + imgU * after.effScale
+      // after.offsetX above is computed with pan=0, so:
+      //   cssX = (cw - after.drawW)/2 + newPanX + imgU * after.effScale
+      const newPanX = cssX - (cw - after.drawW) / 2 - imgU * after.effScale;
+      const newPanY = cssY - (ch - after.drawH) / 2 - imgV * after.effScale;
+
+      setViewScale(newScale);
+      setViewPanX(clampPan(newPanX, after.drawW, cw));
+      setViewPanY(clampPan(newPanY, after.drawH, ch));
+    },
+    [image, viewScale, viewPanX, viewPanY]
+  );
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.addEventListener("wheel", handleCanvasWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleCanvasWheel);
+  }, [handleCanvasWheel, image]);
 
   const handleZoomClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -1131,7 +1436,8 @@ function App() {
       const sh = 2 * r;
       const u = sx + (zx / ZOOM_PANEL_PX) * sw;
       const v = sy + (zy / ZOOM_PANEL_PX) * sh;
-      const hit = hitTestClick(u, v, clicks);
+      // Zoom-panel effective scale: ZOOM_PANEL_PX CSS-px maps to (2*r) image-px.
+      const hit = hitTestClick(u, v, clicks, ZOOM_PANEL_PX / (2 * r));
       if (hit !== null) {
         setSelectedIdx(hit);
         return;
@@ -1272,8 +1578,27 @@ function App() {
           {image ? (
             <canvas
               ref={canvasRef}
-              onClick={handleCanvasClick}
+              style={{
+                cursor:
+                  spaceDown && viewScale > 1
+                    ? isDragging
+                      ? "grabbing"
+                      : "grab"
+                    : "crosshair",
+              }}
+              onClick={(e) => {
+                // Suppress the click if space was held during mousedown
+                // (user was panning, even if pan didn't actually start).
+                if (suppressNextClickRef.current || panStateRef.current) {
+                  suppressNextClickRef.current = false;
+                  return;
+                }
+                handleCanvasClick(e);
+              }}
               onMouseMove={handleCanvasMove}
+              onMouseDown={handleCanvasMouseDown}
+              onMouseUp={endPan}
+              onMouseLeave={endPan}
             />
           ) : error ? (
             <div className="state-center">
@@ -1370,7 +1695,7 @@ function App() {
                   onChange={(e) => setAutoAdvance(e.currentTarget.checked)}
                 />
                 <span>Auto-advance 1→15</span>
-                <span className="key-hint">space</span>
+                <span className="key-hint">a</span>
               </label>
               <DistanceSparkline clicks={clicks} />
             </div>
@@ -1461,6 +1786,17 @@ function App() {
               <>
                 <span className="sep">·</span>
                 <span>{saveStateText}</span>
+              </>
+            )}
+            {viewScale > 1 && (
+              <>
+                <span className="sep">·</span>
+                <span>
+                  {viewScale.toFixed(1)}× zoom{" "}
+                  <button className="link" onClick={resetView} type="button">
+                    reset
+                  </button>
+                </span>
               </>
             )}
             {selectedIdx !== null && clicks[selectedIdx] && (
