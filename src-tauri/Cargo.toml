@@ -1,9 +1,11 @@
 [package]
 name = "flaglabel"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.1.1"
+description = "Keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys."
+authors = ["Toqi Tahamid Sarker"]
 edition = "2021"
+repository = "https://github.com/toqitahamid/FlagLabel"
+homepage = "https://github.com/toqitahamid/FlagLabel"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

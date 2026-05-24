@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "FlagLabel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.toqi.flaglabel",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,6 +31,12 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "Toqi Tahamid Sarker",
+    "copyright": "© 2026 Toqi Tahamid Sarker",
+    "category": "Productivity",
+    "shortDescription": "Click flag wire–ground intersections in wildlife camera-trap photos.",
+    "longDescription": "FlagLabel is a fast, keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys. Open a folder of reference photos, pick a transect, set a distance, and click the wire–ground intersection. Output is one small JSON file per image with image-pixel coordinates, ready for downstream camera-calibration code.",
+    "homepage": "https://github.com/toqitahamid/FlagLabel",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

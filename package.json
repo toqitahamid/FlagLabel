@@ -1,7 +1,15 @@
 {
   "name": "flaglabel",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "description": "Keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys.",
+  "author": "Toqi Tahamid Sarker",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/toqitahamid/FlagLabel.git"
+  },
+  "homepage": "https://github.com/toqitahamid/FlagLabel",
+  "bugs": "https://github.com/toqitahamid/FlagLabel/issues",
   "type": "module",
   "scripts": {
     "dev": "vite",

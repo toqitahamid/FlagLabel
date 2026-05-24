@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin"
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Extract release notes for ${{ github.ref_name }}
+        id: notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Pull the section between "## v$VERSION" and the next "## v" heading.
+          BODY=$(awk -v ver="## v$VERSION" '
+            $0 == ver { found=1; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md)
+          if [ -z "$BODY" ]; then
+            BODY="See the assets below to download and install."
+          fi
+          {
+            echo "body<<EOF_NOTES"
+            echo "$BODY"
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "FlagLabel ${{ github.ref_name }}"
+          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
