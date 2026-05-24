@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import {
+  Menu,
+  MenuItem,
+  PredefinedMenuItem,
+  Submenu,
+} from "@tauri-apps/api/menu";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { Store } from "@tauri-apps/plugin-store";
 import { check } from "@tauri-apps/plugin-updater";
@@ -72,7 +79,24 @@ function expectedJsonPath(image: LoadedImage, clicksDir: string): string {
   return joinPath(clicksDir, clickFilename(image));
 }
 
-function buildClickFile(image: LoadedImage, clicks: Click[]) {
+function clickJsonPathFor(imagePath: string, clicksDir: string): string {
+  const name = `${siteFromPath(imagePath)}__${stemFromPath(imagePath)}.json`;
+  return joinPath(clicksDir, name);
+}
+
+type Counts = { L: number; C: number; R: number };
+
+function countsFromClicks(cs: Click[]): Counts {
+  const out: Counts = { L: 0, C: 0, R: 0 };
+  for (const c of cs) out[c.transect]++;
+  return out;
+}
+
+function buildClickFile(
+  image: LoadedImage,
+  clicks: Click[],
+  appVersion: string
+) {
   return {
     site: siteFromPath(image.path),
     image: pathBasename(image.path),
@@ -80,6 +104,8 @@ function buildClickFile(image: LoadedImage, clicks: Click[]) {
     image_h: image.height,
     click_type: "wire_ground_intersection",
     note: "Click at the wire-ground intersection (base), not the flag head.",
+    created_at: new Date().toISOString(),
+    app_version: appVersion,
     clicks: clicks.map((c) => ({
       u: c.u,
       v: c.v,
@@ -99,6 +125,202 @@ function fmtTimeOfDay(ts: number): string {
 
 function fmtDistance(d: number): string {
   return Number.isInteger(d) ? String(d) : d.toFixed(1);
+}
+
+const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
+  {
+    title: "File",
+    rows: [
+      ["Open image", "⌘O"],
+      ["Open folder", "⌘⇧O"],
+      ["Save", "⌘S"],
+    ],
+  },
+  {
+    title: "Navigation",
+    rows: [
+      ["Previous / next image (folder mode)", "← / →"],
+      ["Jump to image", "click sidebar row"],
+    ],
+  },
+  {
+    title: "Labels",
+    rows: [
+      ["Transect L / C / R", "1 / 2 / 3"],
+      ["Distance ± 1 m", "↑ / ↓"],
+      ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
+      ["Toggle auto-advance 1→15", "space"],
+    ],
+  },
+  {
+    title: "Editing",
+    rows: [
+      ["Undo last click", "⌘Z"],
+      ["Clear all (current image)", "clear all link"],
+    ],
+  },
+  {
+    title: "View",
+    rows: [
+      ["Zoom radius − / +", "[ / ]"],
+    ],
+  },
+  {
+    title: "Help",
+    rows: [
+      ["Open this panel", "? or ⌘/"],
+      ["Close panel", "Esc"],
+    ],
+  },
+];
+
+function KeyboardHelp({
+  onClose,
+  appVersion,
+}: {
+  onClose: () => void;
+  appVersion: string;
+}) {
+  return (
+    <div className="help-backdrop" onClick={onClose}>
+      <div
+        className="help-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="Keyboard reference"
+      >
+        <div className="help-header">
+          <div className="help-title">
+            FlagLabel <span className="dim">· Keyboard reference</span>
+          </div>
+          <button
+            className="help-close"
+            onClick={onClose}
+            aria-label="Close"
+            title="Esc"
+          >
+            ×
+          </button>
+        </div>
+
+        <p className="help-intro">
+          Click on the wire-ground intersection (base) of each flag — not the
+          flag head. Pick a transect and distance from the right rail, then
+          click in the main image or the magnified zoom panel. Auto-advance
+          fills distances 1 through 15 in sequence. Files auto-save 5 seconds
+          after the last change once a clicks folder is chosen.
+        </p>
+
+        <div className="help-grid">
+          {HELP_SECTIONS.map((section) => (
+            <div key={section.title} className="help-section">
+              <div className="help-section-title">{section.title}</div>
+              <dl className="help-rows">
+                {section.rows.map(([action, keys]) => (
+                  <div key={action} className="help-row">
+                    <dt>{action}</dt>
+                    <dd>
+                      <kbd>{keys}</kbd>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+
+        <div className="help-footer">
+          <span>v{appVersion || "0.1.0"}</span>
+          <span className="dim">Press Esc to close</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DistanceSparkline({ clicks }: { clicks: Click[] }) {
+  const bins: Counts[] = Array.from({ length: 15 }, () => ({
+    L: 0,
+    C: 0,
+    R: 0,
+  }));
+  for (const c of clicks) {
+    const i = Math.round(c.distance) - 1;
+    if (i >= 0 && i < 15) bins[i][c.transect]++;
+  }
+  const maxCount = Math.max(1, ...bins.map((b) => b.L + b.C + b.R));
+  const W = 240;
+  const H = 28;
+  const barW = W / 15;
+  return (
+    <svg
+      className="distance-sparkline"
+      viewBox={`0 0 ${W} ${H + 10}`}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      <line
+        x1="0"
+        y1={H + 0.5}
+        x2={W}
+        y2={H + 0.5}
+        stroke="var(--border-subtle)"
+        strokeWidth="1"
+      />
+      {bins.map((b, i) => {
+        const x = i * barW + 1;
+        const bw = barW - 2;
+        const lH = (b.L / maxCount) * H;
+        const cH = (b.C / maxCount) * H;
+        const rH = (b.R / maxCount) * H;
+        const totalH = lH + cH + rH;
+        const yBase = H - totalH;
+        return (
+          <g key={i}>
+            <rect
+              x={x}
+              y={yBase}
+              width={bw}
+              height={lH}
+              fill={TRANSECT_COLORS.L}
+            />
+            <rect
+              x={x}
+              y={yBase + lH}
+              width={bw}
+              height={cH}
+              fill={TRANSECT_COLORS.C}
+            />
+            <rect
+              x={x}
+              y={yBase + lH + cH}
+              width={bw}
+              height={rH}
+              fill={TRANSECT_COLORS.R}
+            />
+          </g>
+        );
+      })}
+      <text
+        x="0"
+        y={H + 9}
+        fontSize="8"
+        fill="var(--text-tertiary)"
+        fontFamily="var(--font-mono)"
+      >
+        1
+      </text>
+      <text
+        x={W}
+        y={H + 9}
+        fontSize="8"
+        fill="var(--text-tertiary)"
+        fontFamily="var(--font-mono)"
+        textAnchor="end"
+      >
+        15
+      </text>
+    </svg>
+  );
 }
 
 function drawMarker(
@@ -145,6 +367,17 @@ function App() {
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [dirty, setDirty] = useState<boolean>(false);
 
+  const [folderDir, setFolderDir] = useState<string | null>(null);
+  const [folderImages, setFolderImages] = useState<string[]>([]);
+  const [imageCounts, setImageCounts] = useState<Record<string, Counts>>({});
+
+  const [appVersion, setAppVersion] = useState<string>("");
+  const [showHelp, setShowHelp] = useState<boolean>(false);
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
+
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -183,6 +416,36 @@ function App() {
     })();
   }, []);
 
+  const loadImage = useCallback((path: string): Promise<void> => {
+    return new Promise((resolve) => {
+      setError(null);
+      const url = convertFileSrc(path);
+      const img = new Image();
+      img.onload = () => {
+        imgRef.current = img;
+        setClicks([]);
+        setCursor(null);
+        setCurrentDistance(1);
+        setDirty(false);
+        setLastSavedAt(null);
+        setImage({
+          path,
+          url,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+        resolve();
+      };
+      img.onerror = () => {
+        imgRef.current = null;
+        setImage(null);
+        setError(path);
+        resolve();
+      };
+      img.src = url;
+    });
+  }, []);
+
   const handleOpen = useCallback(async () => {
     if (dirty) {
       const proceed = await ask(
@@ -193,37 +456,81 @@ function App() {
       );
       if (!proceed) return;
     }
-    setError(null);
     const selected = await open({
       multiple: false,
       directory: false,
       filters: [{ name: "Images", extensions: ["jpg", "jpeg", "png"] }],
     });
     if (!selected || Array.isArray(selected)) return;
+    setFolderDir(null);
+    setFolderImages([]);
+    await loadImage(selected);
+  }, [dirty, clicks.length, loadImage]);
 
-    const url = convertFileSrc(selected);
-    const img = new Image();
-    img.onload = () => {
-      imgRef.current = img;
-      setClicks([]);
-      setCursor(null);
-      setCurrentDistance(1);
-      setDirty(false);
-      setLastSavedAt(null);
-      setImage({
+  const handleOpenFolder = useCallback(async () => {
+    if (dirty) {
+      const proceed = await ask(
+        `You have ${clicks.length} unsaved click${
+          clicks.length === 1 ? "" : "s"
+        }. Discard them?`,
+        { title: "Discard unsaved changes?", kind: "warning" }
+      );
+      if (!proceed) return;
+    }
+    const selected = await open({
+      multiple: false,
+      directory: true,
+      title: "Pick a folder of images",
+    });
+    if (!selected || Array.isArray(selected)) return;
+    try {
+      const images = await invoke<string[]>("list_images_in_dir", {
         path: selected,
-        url,
-        width: img.naturalWidth,
-        height: img.naturalHeight,
       });
+      if (images.length === 0) {
+        setError(`No JPG/PNG files in ${selected}`);
+        setFolderDir(null);
+        setFolderImages([]);
+        return;
+      }
+      setFolderDir(selected);
+      setFolderImages(images);
+      await loadImage(images[0]);
+    } catch (e) {
+      console.error("Folder open failed", e);
+    }
+  }, [dirty, clicks.length, loadImage]);
+
+  // Scan all JSONs in the clicks dir for the current folder's images
+  useEffect(() => {
+    if (!clicksDir || folderImages.length === 0) {
+      setImageCounts({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const result: Record<string, Counts> = {};
+      for (const path of folderImages) {
+        if (cancelled) return;
+        const jsonPath = clickJsonPathFor(path, clicksDir);
+        try {
+          const content = await invoke<string | null>("read_text_file", {
+            path: jsonPath,
+          });
+          if (!content) continue;
+          const data = JSON.parse(content);
+          if (!Array.isArray(data.clicks)) continue;
+          result[path] = countsFromClicks(data.clicks as Click[]);
+        } catch (e) {
+          console.error("Failed to read", jsonPath, e);
+        }
+      }
+      if (!cancelled) setImageCounts(result);
+    })();
+    return () => {
+      cancelled = true;
     };
-    img.onerror = () => {
-      imgRef.current = null;
-      setImage(null);
-      setError(selected);
-    };
-    img.src = url;
-  }, [dirty, clicks.length]);
+  }, [clicksDir, folderImages]);
 
   // Auto-load matching JSON when image + clicksDir are known
   useEffect(() => {
@@ -268,16 +575,166 @@ function App() {
       }
     }
     const path = expectedJsonPath(image, dir);
-    const data = buildClickFile(image, clicks);
+    const data = buildClickFile(image, clicks, appVersion);
     const content = JSON.stringify(data, null, 2);
     try {
       await invoke("write_text_file", { path, content });
       setLastSavedAt(Date.now());
       setDirty(false);
+      setImageCounts((prev) => ({
+        ...prev,
+        [image.path]: countsFromClicks(clicks),
+      }));
     } catch (e) {
       console.error("Save failed", e);
     }
-  }, [image, clicks, clicksDir]);
+  }, [image, clicks, clicksDir, appVersion]);
+
+  const navigateBy = useCallback(
+    async (delta: number) => {
+      if (folderImages.length === 0 || !image) return;
+      const curr = folderImages.indexOf(image.path);
+      if (curr < 0) return;
+      const target = curr + delta;
+      if (target < 0 || target >= folderImages.length) return;
+      if (dirty) await handleSave();
+      await loadImage(folderImages[target]);
+    },
+    [folderImages, image, dirty, handleSave, loadImage]
+  );
+
+  const navigateToIndex = useCallback(
+    async (idx: number) => {
+      if (idx < 0 || idx >= folderImages.length) return;
+      if (image && folderImages[idx] === image.path) return;
+      if (dirty) await handleSave();
+      await loadImage(folderImages[idx]);
+    },
+    [folderImages, image, dirty, handleSave, loadImage]
+  );
+
+  const menuHandlersRef = useRef({
+    handleOpen,
+    handleOpenFolder,
+    handleSave,
+    showHelpModal: () => setShowHelp(true),
+  });
+  useEffect(() => {
+    menuHandlersRef.current = {
+      handleOpen,
+      handleOpenFolder,
+      handleSave,
+      showHelpModal: () => setShowHelp(true),
+    };
+  }, [handleOpen, handleOpenFolder, handleSave]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sep = await PredefinedMenuItem.new({ item: "Separator" });
+        const aboutItem = await PredefinedMenuItem.new({
+          item: { About: { name: "FlagLabel" } },
+        });
+        const hideItem = await PredefinedMenuItem.new({ item: "Hide" });
+        const hideOthersItem = await PredefinedMenuItem.new({
+          item: "HideOthers",
+        });
+        const showAllItem = await PredefinedMenuItem.new({ item: "ShowAll" });
+        const quitItem = await PredefinedMenuItem.new({ item: "Quit" });
+        const cutItem = await PredefinedMenuItem.new({ item: "Cut" });
+        const copyItem = await PredefinedMenuItem.new({ item: "Copy" });
+        const pasteItem = await PredefinedMenuItem.new({ item: "Paste" });
+        const selectAllItem = await PredefinedMenuItem.new({
+          item: "SelectAll",
+        });
+        const minimizeItem = await PredefinedMenuItem.new({ item: "Minimize" });
+        const closeWindowItem = await PredefinedMenuItem.new({
+          item: "CloseWindow",
+        });
+
+        const openImageItem = await MenuItem.new({
+          id: "open-image",
+          text: "Open Image…",
+          accelerator: "CmdOrCtrl+O",
+          action: () => menuHandlersRef.current.handleOpen(),
+        });
+        const openFolderItem = await MenuItem.new({
+          id: "open-folder",
+          text: "Open Folder…",
+          accelerator: "CmdOrCtrl+Shift+O",
+          action: () => menuHandlersRef.current.handleOpenFolder(),
+        });
+        const saveItem = await MenuItem.new({
+          id: "save",
+          text: "Save",
+          accelerator: "CmdOrCtrl+S",
+          action: () => menuHandlersRef.current.handleSave(),
+        });
+        const helpItem = await MenuItem.new({
+          id: "help-shortcuts",
+          text: "Keyboard Shortcuts",
+          accelerator: "CmdOrCtrl+/",
+          action: () => menuHandlersRef.current.showHelpModal(),
+        });
+
+        const appSubmenu = await Submenu.new({
+          text: "FlagLabel",
+          items: [
+            aboutItem,
+            sep,
+            hideItem,
+            hideOthersItem,
+            showAllItem,
+            sep,
+            quitItem,
+          ],
+        });
+        const fileSubmenu = await Submenu.new({
+          text: "File",
+          items: [openImageItem, openFolderItem, sep, saveItem],
+        });
+        const editSubmenu = await Submenu.new({
+          text: "Edit",
+          items: [cutItem, copyItem, pasteItem, selectAllItem],
+        });
+        const windowSubmenu = await Submenu.new({
+          text: "Window",
+          items: [minimizeItem, closeWindowItem],
+        });
+        const helpSubmenu = await Submenu.new({
+          text: "Help",
+          items: [helpItem],
+        });
+
+        const menu = await Menu.new({
+          items: [
+            appSubmenu,
+            fileSubmenu,
+            editSubmenu,
+            windowSubmenu,
+            helpSubmenu,
+          ],
+        });
+        if (cancelled) return;
+        await menu.setAsAppMenu();
+      } catch (e) {
+        console.error("Menu setup failed", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // F4: auto-save 5s after the last change (only when clicksDir is set)
+  useEffect(() => {
+    if (!dirty || !image || clicks.length === 0 || !clicksDir) return;
+    const id = setTimeout(() => {
+      handleSave();
+    }, 5000);
+    return () => clearTimeout(id);
+  }, [dirty, clicks, image, clicksDir, handleSave]);
 
   const handleUndo = useCallback(() => {
     setClicks((prev) => {
@@ -306,23 +763,38 @@ function App() {
       const inInput = e.target instanceof HTMLInputElement;
       const cmd = e.metaKey || e.ctrlKey;
 
-      // Global shortcuts — work even in inputs
-      if (cmd && e.key.toLowerCase() === "o") {
-        e.preventDefault();
-        handleOpen();
-        return;
-      }
-      if (cmd && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        handleSave();
-        return;
+      // ⌘O / ⌘⇧O / ⌘S are bound by the native menu accelerators.
+      // ⌘Z stays here because it must skip text inputs (browser undo).
+      if (e.key === "Escape") {
+        if (showHelp) {
+          e.preventDefault();
+          setShowHelp(false);
+          return;
+        }
       }
 
       if (inInput) return;
 
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+        return;
+      }
+      if (cmd && e.key === "/") {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+        return;
+      }
+
       if (cmd && e.key.toLowerCase() === "z") {
         e.preventDefault();
         handleUndo();
+      } else if (e.key === "ArrowLeft" && folderImages.length > 0) {
+        e.preventDefault();
+        navigateBy(-1);
+      } else if (e.key === "ArrowRight" && folderImages.length > 0) {
+        e.preventDefault();
+        navigateBy(1);
       } else if (e.key === "1") {
         e.preventDefault();
         setCurrentTransect("L");
@@ -353,7 +825,7 @@ function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleOpen, handleSave, handleUndo]);
+  }, [handleUndo, navigateBy, folderImages.length, showHelp]);
 
   // Main canvas
   useEffect(() => {
@@ -574,9 +1046,96 @@ function App() {
             )}
           </span>
         )}
+        {image && (
+          <div className="title-actions">
+            <button
+              className="title-btn"
+              onClick={handleOpen}
+              title="Open image (⌘O)"
+            >
+              Open file
+            </button>
+            <button
+              className="title-btn"
+              onClick={handleOpenFolder}
+              title="Open folder (⌘⇧O)"
+            >
+              Open folder
+            </button>
+          </div>
+        )}
       </header>
 
-      <section className={`workarea ${image ? "with-rail" : ""}`}>
+      <section
+        className={`workarea ${folderImages.length > 0 ? "with-folder" : ""} ${
+          image ? "with-rail" : ""
+        }`}
+      >
+        {folderImages.length > 0 && (
+          <aside className="folder-sidebar">
+            <div className="folder-header">
+              <div className="folder-path" title={folderDir ?? ""}>
+                {folderDir ? pathBasename(folderDir) : ""}
+              </div>
+              <div className="folder-meta">
+                <span className="mono">
+                  {
+                    folderImages.filter((p) => {
+                      const c =
+                        image?.path === p
+                          ? countsFromClicks(clicks)
+                          : imageCounts[p];
+                      return c && c.L + c.C + c.R > 0;
+                    }).length
+                  }
+                </span>
+                <span> labeled / </span>
+                <span className="mono">{folderImages.length}</span>
+                <span> total</span>
+              </div>
+            </div>
+            <ul className="image-list">
+              {folderImages.map((path, idx) => {
+                const isActive = image?.path === path;
+                const liveCounts = isActive ? countsFromClicks(clicks) : null;
+                const persisted = imageCounts[path];
+                const rowCounts = liveCounts ?? persisted ?? null;
+                const total = rowCounts
+                  ? rowCounts.L + rowCounts.C + rowCounts.R
+                  : 0;
+                const untouched = total === 0;
+                return (
+                  <li
+                    key={path}
+                    className={`image-item ${isActive ? "active" : ""} ${
+                      untouched ? "untouched" : ""
+                    }`}
+                    onClick={() => navigateToIndex(idx)}
+                    title={path}
+                  >
+                    <span className="image-item-name">{pathBasename(path)}</span>
+                    {rowCounts && total > 0 && (
+                      <span className="image-item-counts">
+                        <span style={{ color: TRANSECT_COLORS.L }}>
+                          {rowCounts.L}
+                        </span>
+                        <span className="dot">·</span>
+                        <span style={{ color: TRANSECT_COLORS.C }}>
+                          {rowCounts.C}
+                        </span>
+                        <span className="dot">·</span>
+                        <span style={{ color: TRANSECT_COLORS.R }}>
+                          {rowCounts.R}
+                        </span>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </aside>
+        )}
+
         <div className="canvas-container" ref={containerRef}>
           {image ? (
             <canvas
@@ -593,11 +1152,23 @@ function App() {
             </div>
           ) : (
             <div className="state-center">
-              <button className="btn primary" onClick={handleOpen}>
-                Open an image
-              </button>
+              <div className="state-buttons">
+                <button className="btn primary" onClick={handleOpen}>
+                  Open image
+                </button>
+                <button className="btn" onClick={handleOpenFolder}>
+                  Open folder
+                </button>
+              </div>
               <span className="hint">
-                or press <kbd>⌘O</kbd>
+                <kbd>⌘O</kbd> file · <kbd>⌘⇧O</kbd> folder ·{" "}
+                <button
+                  className="link"
+                  onClick={() => setShowHelp(true)}
+                  type="button"
+                >
+                  <kbd>?</kbd> shortcuts
+                </button>
               </span>
             </div>
           )}
@@ -669,6 +1240,7 @@ function App() {
                 <span>Auto-advance 1→15</span>
                 <span className="key-hint">space</span>
               </label>
+              <DistanceSparkline clicks={clicks} />
             </div>
 
             <div className="rail-section">
@@ -737,6 +1309,13 @@ function App() {
           </aside>
         )}
       </section>
+
+      {showHelp && (
+        <KeyboardHelp
+          onClose={() => setShowHelp(false)}
+          appVersion={appVersion}
+        />
+      )}
 
       <footer className="statusbar">
         {image ? (
