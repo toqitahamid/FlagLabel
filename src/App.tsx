@@ -1165,10 +1165,10 @@ function App() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const r = zoomRadius;
-    const cu = Math.max(r, Math.min(image.width - r, cursor.u));
-    const cv = Math.max(r, Math.min(image.height - r, cursor.v));
-    const sx = cu - r;
-    const sy = cv - r;
+    // No clamp on cursor: when near an edge, the panel pans past the image
+    // (filled black) so the crosshair always tracks the actual cursor position.
+    const sx = cursor.u - r;
+    const sy = cursor.v - r;
     const sw = 2 * r;
     const sh = 2 * r;
     const zoomScale = cssW / sw;
@@ -1429,14 +1429,14 @@ function App() {
       const zx = e.clientX - rect.left;
       const zy = e.clientY - rect.top;
       const r = zoomRadius;
-      const cu = Math.max(r, Math.min(image.width - r, cursor.u));
-      const cv = Math.max(r, Math.min(image.height - r, cursor.v));
-      const sx = cu - r;
-      const sy = cv - r;
+      const sx = cursor.u - r;
+      const sy = cursor.v - r;
       const sw = 2 * r;
       const sh = 2 * r;
       const u = sx + (zx / ZOOM_PANEL_PX) * sw;
       const v = sy + (zy / ZOOM_PANEL_PX) * sh;
+      // Ignore clicks in the off-image black band at edges (sx/sy unclamped).
+      if (u < 0 || v < 0 || u >= image.width || v >= image.height) return;
       // Zoom-panel effective scale: ZOOM_PANEL_PX CSS-px maps to (2*r) image-px.
       const hit = hitTestClick(u, v, clicks, ZOOM_PANEL_PX / (2 * r));
       if (hit !== null) {
@@ -1657,6 +1657,27 @@ function App() {
               {!cursor && <div className="zoom-empty">hover the image</div>}
             </div>
 
+            <div className="rail-section rail-pinned">
+              <div className="rail-label">
+                <span>Zoom radius</span>
+                <span className="key-hint">[ ]</span>
+              </div>
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={ZOOM_MIN}
+                  max={ZOOM_MAX}
+                  step={5}
+                  value={zoomRadius}
+                  onChange={(e) =>
+                    setZoomRadius(Number(e.currentTarget.value))
+                  }
+                  className="slider"
+                />
+                <span className="slider-value mono">{zoomRadius}px</span>
+              </div>
+            </div>
+
             <div className="rail-middle">
               <div className="rail-section">
                 <div className="rail-label">
@@ -1718,27 +1739,6 @@ function App() {
                   <span className="key-hint">a</span>
                 </label>
                 <DistanceSparkline clicks={clicks} />
-              </div>
-
-              <div className="rail-section">
-                <div className="rail-label">
-                  <span>Zoom radius</span>
-                  <span className="key-hint">[ ]</span>
-                </div>
-                <div className="slider-row">
-                  <input
-                    type="range"
-                    min={ZOOM_MIN}
-                    max={ZOOM_MAX}
-                    step={5}
-                    value={zoomRadius}
-                    onChange={(e) =>
-                      setZoomRadius(Number(e.currentTarget.value))
-                    }
-                    className="slider"
-                  />
-                  <span className="slider-value mono">{zoomRadius}px</span>
-                </div>
               </div>
             </div>
 

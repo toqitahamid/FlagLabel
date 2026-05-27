@@ -322,6 +322,10 @@ body,
   pointer-events: none;
 }
 
+.rail-pinned {
+  flex-shrink: 0;
+}
+
 .rail-middle {
   display: flex;
   flex-direction: column;
