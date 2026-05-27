@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- Title bar polish on macOS: removed the duplicate "FlagLabel" label that was rendering inside the app on top of the native window title, and forced the window to dark theme so the OS title bar no longer renders white against the app's dark UI.
+
 ## v0.1.2
 
 ### Fixes

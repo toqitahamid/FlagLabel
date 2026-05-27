@@ -1465,10 +1465,8 @@ function App() {
   return (
     <main className="app">
       <header className="titlebar">
-        <span className="app-name">FlagLabel</span>
         {image && (
           <span className="title-info">
-            <span className="sep">·</span>
             <span>{filename}</span>
             <span className="dim">
               {image.width}×{image.height}
