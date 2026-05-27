@@ -1,9 +1,23 @@
 # Changelog
 
-## Unreleased
+## v0.1.3
+
+### Always-visible Save and Undo
+- **Save** and **Undo** have moved to the titlebar, so they stay visible at any window size. On short windows the rail used to clip the bottom buttons; the titlebar never does.
+- The right rail's middle sections (Transect, Distance, Zoom radius) now scroll independently when the window is short. Counts and the **clear all** link stay pinned at the bottom of the rail.
+
+### Polish
+- Empty state shows a one-line tagline ("Mark the wire-ground intersection of each distance flag.") so it's obvious what to do on first launch.
+- The "saved at HH:MM:SS" indicator in the titlebar is now a quiet tertiary color instead of bright accent green; the amber "unsaved" warning still pops.
+- Keyboard focus rings on every interactive control (buttons, segmented Transect, distance input, slider, checkbox, sidebar rows) for accessibility.
+- Help modal has a layered shadow and a subtle slide-up entrance; backdrop fade is slightly longer for a smoother appearance.
+- Zoom-radius slider thumb has a softer border and drop shadow, with a hover halo.
+- All animations respect `prefers-reduced-motion`.
+- Status bar gets a touch more horizontal breathing room.
+- Color tokens cleaned up: `--warning`, `--danger-soft`, `--bg-zoom`, plus radius and transition tokens replace previously hard-coded values throughout the stylesheet.
 
 ### Fixes
-- Title bar polish on macOS: removed the duplicate "FlagLabel" label that was rendering inside the app on top of the native window title, and forced the window to dark theme so the OS title bar no longer renders white against the app's dark UI.
+- macOS title bar: removed the duplicate "FlagLabel" label that was rendering inside the app on top of the native window title, and forced the window to dark theme so the OS title bar no longer renders white against the app's dark UI.
 
 ## v0.1.2
 

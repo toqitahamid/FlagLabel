@@ -1487,6 +1487,23 @@ function App() {
           <div className="title-actions">
             <button
               className="title-btn"
+              onClick={handleUndo}
+              disabled={clicks.length === 0}
+              title="Undo last click (⌘Z)"
+            >
+              Undo
+            </button>
+            <button
+              className="title-btn primary"
+              onClick={handleSave}
+              disabled={!dirty}
+              title="Save (⌘S)"
+            >
+              Save
+            </button>
+            <span className="title-divider" aria-hidden />
+            <button
+              className="title-btn"
               onClick={handleOpen}
               title="Open image (⌘O)"
             >
@@ -1608,6 +1625,9 @@ function App() {
             </div>
           ) : (
             <div className="state-center">
+              <div className="state-tagline">
+                Mark the wire-ground intersection of each distance flag.
+              </div>
               <div className="state-buttons">
                 <button className="btn primary" onClick={handleOpen}>
                   Open image
@@ -1637,131 +1657,114 @@ function App() {
               {!cursor && <div className="zoom-empty">hover the image</div>}
             </div>
 
-            <div className="rail-section">
-              <div className="rail-label">
-                <span>Transect</span>
-                <span className="key-hint">1 · 2 · 3</span>
+            <div className="rail-middle">
+              <div className="rail-section">
+                <div className="rail-label">
+                  <span>Transect</span>
+                  <span className="key-hint">1 · 2 · 3</span>
+                </div>
+                <div className="segmented">
+                  {TRANSECTS.map((t) => {
+                    const active = currentTransect === t;
+                    return (
+                      <button
+                        key={t}
+                        className={`segmented-btn ${active ? "active" : ""}`}
+                        style={
+                          active
+                            ? {
+                                background: TRANSECT_COLORS[t],
+                                color: "var(--bg-app)",
+                                borderColor: TRANSECT_COLORS[t],
+                              }
+                            : undefined
+                        }
+                        onClick={() => setCurrentTransect(t)}
+                      >
+                        {t}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-              <div className="segmented">
-                {TRANSECTS.map((t) => {
-                  const active = currentTransect === t;
-                  return (
-                    <button
-                      key={t}
-                      className={`segmented-btn ${active ? "active" : ""}`}
-                      style={
-                        active
-                          ? {
-                              background: TRANSECT_COLORS[t],
-                              color: "#0c0c0d",
-                              borderColor: TRANSECT_COLORS[t],
-                            }
-                          : undefined
-                      }
-                      onClick={() => setCurrentTransect(t)}
-                    >
-                      {t}
-                    </button>
-                  );
-                })}
+
+              <div className="rail-section">
+                <div className="rail-label">
+                  <span>Distance</span>
+                  <span className="key-hint">↑ ↓</span>
+                </div>
+                <div className="distance-row">
+                  <input
+                    type="number"
+                    value={currentDistance}
+                    step={0.5}
+                    min={0}
+                    max={99.9}
+                    onChange={(e) => {
+                      const v = Number(e.currentTarget.value);
+                      if (Number.isFinite(v)) setCurrentDistance(v);
+                    }}
+                    className="distance-input"
+                  />
+                  <span className="unit">m</span>
+                </div>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={autoAdvance}
+                    onChange={(e) => setAutoAdvance(e.currentTarget.checked)}
+                  />
+                  <span>Auto-advance 1→15</span>
+                  <span className="key-hint">a</span>
+                </label>
+                <DistanceSparkline clicks={clicks} />
+              </div>
+
+              <div className="rail-section">
+                <div className="rail-label">
+                  <span>Zoom radius</span>
+                  <span className="key-hint">[ ]</span>
+                </div>
+                <div className="slider-row">
+                  <input
+                    type="range"
+                    min={ZOOM_MIN}
+                    max={ZOOM_MAX}
+                    step={5}
+                    value={zoomRadius}
+                    onChange={(e) =>
+                      setZoomRadius(Number(e.currentTarget.value))
+                    }
+                    className="slider"
+                  />
+                  <span className="slider-value mono">{zoomRadius}px</span>
+                </div>
               </div>
             </div>
 
-            <div className="rail-section">
-              <div className="rail-label">
-                <span>Distance</span>
-                <span className="key-hint">↑ ↓</span>
+            <div className="rail-bottom">
+              <div className="rail-section counts">
+                <div className="counts-line">
+                  <span style={{ color: TRANSECT_COLORS.L }}>L</span>
+                  <span className="mono">{counts.L}</span>
+                  <span className="sep">·</span>
+                  <span style={{ color: TRANSECT_COLORS.C }}>C</span>
+                  <span className="mono">{counts.C}</span>
+                  <span className="sep">·</span>
+                  <span style={{ color: TRANSECT_COLORS.R }}>R</span>
+                  <span className="mono">{counts.R}</span>
+                  <span className="eq-sep">=</span>
+                  <span className="mono total">{clicks.length}</span>
+                  <span className="lbl">clicks</span>
+                </div>
               </div>
-              <div className="distance-row">
-                <input
-                  type="number"
-                  value={currentDistance}
-                  step={0.5}
-                  min={0}
-                  max={99.9}
-                  onChange={(e) => {
-                    const v = Number(e.currentTarget.value);
-                    if (Number.isFinite(v)) setCurrentDistance(v);
-                  }}
-                  className="distance-input"
-                />
-                <span className="unit">m</span>
-              </div>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={autoAdvance}
-                  onChange={(e) => setAutoAdvance(e.currentTarget.checked)}
-                />
-                <span>Auto-advance 1→15</span>
-                <span className="key-hint">a</span>
-              </label>
-              <DistanceSparkline clicks={clicks} />
+
+              {clicks.length > 0 && (
+                <button className="clear-link" onClick={handleClear}>
+                  clear all
+                </button>
+              )}
             </div>
-
-            <div className="rail-section">
-              <div className="rail-label">
-                <span>Zoom radius</span>
-                <span className="key-hint">[ ]</span>
-              </div>
-              <div className="slider-row">
-                <input
-                  type="range"
-                  min={ZOOM_MIN}
-                  max={ZOOM_MAX}
-                  step={5}
-                  value={zoomRadius}
-                  onChange={(e) =>
-                    setZoomRadius(Number(e.currentTarget.value))
-                  }
-                  className="slider"
-                />
-                <span className="slider-value mono">{zoomRadius}px</span>
-              </div>
-            </div>
-
-            <div className="rail-spacer" />
-
-            <div className="rail-section counts">
-              <div className="counts-line">
-                <span style={{ color: TRANSECT_COLORS.L }}>L</span>
-                <span className="mono">{counts.L}</span>
-                <span className="sep">·</span>
-                <span style={{ color: TRANSECT_COLORS.C }}>C</span>
-                <span className="mono">{counts.C}</span>
-                <span className="sep">·</span>
-                <span style={{ color: TRANSECT_COLORS.R }}>R</span>
-                <span className="mono">{counts.R}</span>
-                <span className="eq-sep">=</span>
-                <span className="mono total">{clicks.length}</span>
-                <span className="lbl">clicks</span>
-              </div>
-            </div>
-
-            <div className="rail-section actions">
-              <button
-                className="btn"
-                onClick={handleUndo}
-                disabled={clicks.length === 0}
-                title="⌘Z"
-              >
-                Undo
-              </button>
-              <button
-                className="btn primary"
-                onClick={handleSave}
-                disabled={!dirty}
-                title="⌘S"
-              >
-                Save
-              </button>
-            </div>
-
-            {clicks.length > 0 && (
-              <button className="clear-link" onClick={handleClear}>
-                clear all
-              </button>
-            )}
           </aside>
         )}
       </section>
