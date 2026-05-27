@@ -639,7 +639,8 @@ function App() {
   }, [image, clicksDir]);
 
   const handleSave = useCallback(async () => {
-    if (!image || clicks.length === 0) return;
+    if (!image) return;
+    if (clicks.length === 0 && !dirty) return;
     let dir = clicksDir;
     if (!dir) {
       const selected = await open({
@@ -670,7 +671,7 @@ function App() {
     } catch (e) {
       console.error("Save failed", e);
     }
-  }, [image, clicks, clicksDir, appVersion]);
+  }, [image, clicks, clicksDir, appVersion, dirty]);
 
   const navigateBy = useCallback(
     async (delta: number) => {
@@ -811,7 +812,7 @@ function App() {
 
   // F4: auto-save 5s after the last change (only when clicksDir is set)
   useEffect(() => {
-    if (!dirty || !image || clicks.length === 0 || !clicksDir) return;
+    if (!dirty || !image || !clicksDir) return;
     const id = setTimeout(() => {
       handleSave();
     }, 5000);
@@ -1751,7 +1752,7 @@ function App() {
               <button
                 className="btn primary"
                 onClick={handleSave}
-                disabled={clicks.length === 0 || !dirty}
+                disabled={!dirty}
                 title="⌘S"
               >
                 Save

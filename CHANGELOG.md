@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.2
+
+### Fixes
+- Saving an empty click list now works. Previously, if you cleared all clicks on an image that already had a saved JSON, neither manual save, auto-save, nor navigation would overwrite the file — the on-disk JSON kept your old clicks. Save fires whenever there are unsaved changes, regardless of whether the change adds or removes.
+
 ## v0.1.1
 
 ### Faster batch labeling
