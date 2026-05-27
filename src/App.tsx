@@ -1166,7 +1166,9 @@ function App() {
 
     const r = zoomRadius;
     // No clamp on cursor: when near an edge, the panel pans past the image
-    // (filled black) so the crosshair always tracks the actual cursor position.
+    // so the crosshair always tracks the actual cursor position. We render
+    // the in-bounds portion of the source at correct scale and leave the
+    // off-image area black (so the user can see which area is non-clickable).
     const sx = cursor.u - r;
     const sy = cursor.v - r;
     const sw = 2 * r;
@@ -1175,9 +1177,33 @@ function App() {
 
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, cssW, cssH);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cssW, cssH);
+
+    // Clip source to image bounds; compute the proportional destination
+    // rect so the image draws at the correct zoom (WebKit's drawImage
+    // would otherwise stretch the clipped source across the full panel).
+    const clippedSx = Math.max(0, sx);
+    const clippedSy = Math.max(0, sy);
+    const clippedSw = Math.min(image.width, sx + sw) - clippedSx;
+    const clippedSh = Math.min(image.height, sy + sh) - clippedSy;
+    if (clippedSw > 0 && clippedSh > 0) {
+      const dx = (clippedSx - sx) * zoomScale;
+      const dy = (clippedSy - sy) * zoomScale;
+      const dw = clippedSw * zoomScale;
+      const dh = clippedSh * zoomScale;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(
+        img,
+        clippedSx,
+        clippedSy,
+        clippedSw,
+        clippedSh,
+        dx,
+        dy,
+        dw,
+        dh
+      );
+    }
 
     for (const c of clicks) {
       if (c.u < sx || c.u > sx + sw || c.v < sy || c.v > sy + sh) continue;
