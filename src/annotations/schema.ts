@@ -1,4 +1,4 @@
-import type { Annotation, Transect, VerticalSpan, HorizontalSpan } from "./model";
+import type { Annotation, Transect, VerticalSpan, HorizontalSpan, FlagToGroundSpan } from "./model";
 
 // The span members of the Annotation union (everything with endpoints). Mirrors
 // the `Span` alias in App.tsx; defined here so the schema layer stays
@@ -53,6 +53,14 @@ type AnnotationFile = {
     transect: Transect;
     distance: number;
   }>;
+  flag_to_ground_spans: Array<{
+    u1: number;
+    v1: number;
+    u2: number;
+    v2: number;
+    transect: Transect;
+    distance: number;
+  }>;
 };
 
 export function buildAnnotationFile(
@@ -92,6 +100,17 @@ export function buildAnnotationFile(
       distance: a.distance,
     }));
 
+  const flag_to_ground_spans = annotations
+    .filter((a): a is FlagToGroundSpan => a.kind === "flag_to_ground_span")
+    .map((a) => ({
+      u1: a.u1,
+      v1: a.v1,
+      u2: a.u2,
+      v2: a.v2,
+      transect: a.transect,
+      distance: a.distance,
+    }));
+
   return {
     schema_version: SCHEMA_VERSION,
     site: meta.site,
@@ -104,6 +123,7 @@ export function buildAnnotationFile(
     wire_ground_points,
     flag_vertical_spans,
     flag_horizontal_spans,
+    flag_to_ground_spans,
   };
 }
 
@@ -176,6 +196,7 @@ export function parseAnnotationFile(json: unknown): Annotation[] {
 
   result.push(...parseSpanArray(obj, "flag_vertical_spans", "vertical_span"));
   result.push(...parseSpanArray(obj, "flag_horizontal_spans", "horizontal_span"));
+  result.push(...parseSpanArray(obj, "flag_to_ground_spans", "flag_to_ground_span"));
 
   return result;
 }

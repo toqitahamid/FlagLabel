@@ -233,3 +233,102 @@ describe("flag_horizontal_spans", () => {
     expect(parseAnnotationFile({ flag_horizontal_spans: "bad" })).toEqual([]);
   });
 });
+
+describe("flag_to_ground_spans", () => {
+  it("buildAnnotationFile emits flag_to_ground_spans with canonical endpoint fields", () => {
+    const anns: Annotation[] = [
+      {
+        kind: "flag_to_ground_span",
+        u1: 200,
+        v1: 100,
+        u2: 210,
+        v2: 650,
+        transect: "C",
+        distance: 5,
+      },
+    ];
+    const file = buildAnnotationFile(META, anns, "0.2.0", "2026-06-02T00:00:00.000Z");
+    expect(file.flag_to_ground_spans).toEqual([
+      { u1: 200, v1: 100, u2: 210, v2: 650, transect: "C", distance: 5 },
+    ]);
+    // other arrays stay empty for a spans-only image
+    expect(file.wire_ground_points).toEqual([]);
+    expect(file.flag_vertical_spans).toEqual([]);
+    expect(file.flag_horizontal_spans).toEqual([]);
+  });
+
+  it("round-trips a flag_to_ground span through build then parse", () => {
+    const anns: Annotation[] = [
+      {
+        kind: "flag_to_ground_span",
+        u1: 200,
+        v1: 100,
+        u2: 210,
+        v2: 650,
+        transect: "R",
+        distance: 9,
+      },
+    ];
+    const parsed = parseAnnotationFile(
+      buildAnnotationFile(META, anns, "0.2.0", "2026-06-02T00:00:00.000Z")
+    );
+    expect(parsed).toEqual(anns);
+  });
+
+  it("round-trips mixed annotations of all four kinds", () => {
+    const wg: Annotation = { kind: "wire_ground", u: 1, v: 2, transect: "L", distance: 1 };
+    const vspan: Annotation = {
+      kind: "vertical_span",
+      u1: 10,
+      v1: 5,
+      u2: 10,
+      v2: 50,
+      transect: "C",
+      distance: 2,
+    };
+    const hspan: Annotation = {
+      kind: "horizontal_span",
+      u1: 50,
+      v1: 100,
+      u2: 300,
+      v2: 103,
+      transect: "R",
+      distance: 3,
+    };
+    const gspan: Annotation = {
+      kind: "flag_to_ground_span",
+      u1: 200,
+      v1: 50,
+      u2: 215,
+      v2: 600,
+      transect: "L",
+      distance: 7,
+    };
+    const parsed = parseAnnotationFile(
+      buildAnnotationFile(META, [wg, vspan, hspan, gspan], "0.2.0", "2026-06-02T00:00:00.000Z")
+    );
+    expect(parsed.filter((a) => a.kind === "wire_ground")).toEqual([wg]);
+    expect(parsed.filter((a) => a.kind === "vertical_span")).toEqual([vspan]);
+    expect(parsed.filter((a) => a.kind === "horizontal_span")).toEqual([hspan]);
+    expect(parsed.filter((a) => a.kind === "flag_to_ground_span")).toEqual([gspan]);
+    expect(parsed).toHaveLength(4);
+  });
+
+  it("skips malformed flag_to_ground span items but keeps valid ones", () => {
+    const result = parseAnnotationFile({
+      flag_to_ground_spans: [
+        null,
+        { u1: 1, v1: 2, u2: 3 }, // missing v2/transect/distance
+        { u1: 1, v1: 2, u2: 3, v2: 4, transect: "X", distance: 1 }, // bad transect
+        { u1: 1, v1: 2, u2: 3, v2: 4, transect: "C", distance: 8 }, // valid
+      ],
+    });
+    expect(result).toEqual([
+      { kind: "flag_to_ground_span", u1: 1, v1: 2, u2: 3, v2: 4, transect: "C", distance: 8 },
+    ]);
+  });
+
+  it("returns [] for non-array flag_to_ground_spans", () => {
+    expect(parseAnnotationFile({ flag_to_ground_spans: "bad" })).toEqual([]);
+  });
+});

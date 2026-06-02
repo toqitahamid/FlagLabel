@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { countsFromAnnotations, canonicalizeSpan, type Annotation } from "./model";
-import type { HorizontalSpan } from "./model";
+import type { HorizontalSpan, FlagToGroundSpan } from "./model";
 
 describe("countsFromAnnotations", () => {
   it("tallies wire-ground annotations per transect", () => {
@@ -120,6 +120,46 @@ describe("canonicalizeSpan (horizontal) — left-first ordering", () => {
         transect: "C",
         distance: 3,
       } satisfies HorizontalSpan,
+    ];
+    expect(countsFromAnnotations(anns)).toEqual({ L: 1, C: 0, R: 0 });
+  });
+});
+
+describe("canonicalizeSpan (flag_to_ground) — upper-first ordering (identical rule to vertical)", () => {
+  it("stores the smaller-v point as (u1,v1) when p1 is already upper (flag top)", () => {
+    const r = canonicalizeSpan("flag_to_ground", { u: 10, v: 20 }, { u: 12, v: 300 });
+    expect(r).toEqual({ u1: 10, v1: 20, u2: 12, v2: 300 });
+  });
+
+  it("orders upper-first regardless of click order (p2 is upper / flag top)", () => {
+    const r = canonicalizeSpan("flag_to_ground", { u: 12, v: 300 }, { u: 10, v: 20 });
+    expect(r).toEqual({ u1: 10, v1: 20, u2: 12, v2: 300 });
+  });
+
+  it("is deterministic and order-independent for equal v (tie on smaller u)", () => {
+    const a = canonicalizeSpan("flag_to_ground", { u: 50, v: 100 }, { u: 20, v: 100 });
+    const b = canonicalizeSpan("flag_to_ground", { u: 20, v: 100 }, { u: 50, v: 100 });
+    expect(a).toEqual({ u1: 20, v1: 100, u2: 50, v2: 100 });
+    expect(a).toEqual(b);
+  });
+
+  it("handles fully coincident points without throwing", () => {
+    const r = canonicalizeSpan("flag_to_ground", { u: 7, v: 7 }, { u: 7, v: 7 });
+    expect(r).toEqual({ u1: 7, v1: 7, u2: 7, v2: 7 });
+  });
+
+  it("ignores flag_to_ground spans in countsFromAnnotations (wire-ground only)", () => {
+    const anns: Annotation[] = [
+      { kind: "wire_ground", u: 1, v: 1, transect: "L", distance: 1 },
+      {
+        kind: "flag_to_ground_span",
+        u1: 10,
+        v1: 20,
+        u2: 12,
+        v2: 300,
+        transect: "C",
+        distance: 5,
+      } satisfies FlagToGroundSpan,
     ];
     expect(countsFromAnnotations(anns)).toEqual({ L: 1, C: 0, R: 0 });
   });

@@ -37,26 +37,29 @@ import {
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
-// "horizontal_span" is the two-click flag horizontal span.
+// "horizontal_span" is the two-click flag horizontal span;
+// "flag_to_ground_span" is the two-click flag-body-top → wire–ground span.
 type ActiveAnnoType = ActiveType;
 // Annotation kind → SpanType (or null for the non-span wire-ground kind). A
-// FULL Record over every kind, so adding a new span kind in Slice 4 hard-errors
-// here until an entry is added — matching SPAN_KIND_FOR / SPAN_LABEL_SUFFIX /
+// FULL Record over every kind, so adding a new span kind hard-errors here until
+// an entry is added — matching SPAN_KIND_FOR / SPAN_LABEL_SUFFIX /
 // canonicalizeSpan. The call site's `if (!spanType) return;` handles the null
 // (wire-ground) case unchanged.
 const SPAN_TYPE_FOR: Record<ActiveAnnoType, SpanType | null> = {
   wire_ground: null,
   vertical_span: "vertical",
   horizontal_span: "horizontal",
+  flag_to_ground_span: "flag_to_ground",
 };
 
 // SpanType → annotation kind. Keyed on `SpanType` (a full Record), so adding a
-// new span type in Slice 3/4 forces a matching entry here at compile time. The
-// value is narrowed to the span kinds so a completed span object typechecks as
-// a member of the union without widening `kind` back to all annotation kinds.
+// new span type forces a matching entry here at compile time. The value is
+// narrowed to the span kinds so a completed span object typechecks as a member
+// of the union without widening `kind` back to all annotation kinds.
 const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
   vertical: "vertical_span",
   horizontal: "horizontal_span",
+  flag_to_ground: "flag_to_ground_span",
 };
 
 type LoadedImage = {
@@ -182,7 +185,7 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: "Labels",
     rows: [
-      ["Annotation type wire–ground / vert. span / horiz. span", "Q / W / E"],
+      ["Annotation type wire–ground / vert. span / horiz. span / flag→ground", "Q / W / E / R"],
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
@@ -201,6 +204,14 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: "Horizontal span (E)",
     rows: [
       ["Place left endpoint, then right endpoint", "click ×2"],
+      ["Endpoints span canvas + zoom panel", "either surface"],
+      ["Cancel a half-placed span", "Esc"],
+    ],
+  },
+  {
+    title: "Flag-to-ground span (R)",
+    rows: [
+      ["Place flag-top endpoint, then ground endpoint", "click ×2"],
       ["Endpoints span canvas + zoom panel", "either surface"],
       ["Cancel a half-placed span", "Esc"],
     ],
@@ -428,10 +439,23 @@ const SPAN_TICK_HALF = 7;
 type Span = Extract<Annotation, { u1: number }>;
 
 // Span kind → label suffix. Keyed on the span kinds (a full Record), so a new
-// span type in Slice 3/4 must add its suffix here at compile time.
+// span type must add its suffix here at compile time.
 const SPAN_LABEL_SUFFIX: Record<Span["kind"], string> = {
   vertical_span: "V",
   horizontal_span: "H",
+  flag_to_ground_span: "G",
+};
+
+// Dash pattern for each span kind. Empty array = solid line. flag_to_ground
+// renders dashed so it reads as distinct from a vertical span that may share
+// its top endpoint. Keyed on span kinds (full Record) so new kinds declare
+// their style here at compile time.
+const SPAN_DASH_PX = 8;
+const SPAN_GAP_PX = 5;
+const SPAN_DASH: Record<Span["kind"], number[]> = {
+  vertical_span: [],
+  horizontal_span: [],
+  flag_to_ground_span: [SPAN_DASH_PX, SPAN_GAP_PX],
 };
 
 // Draw a completed span as a tick-ended line in its transect color, labeled
@@ -454,12 +478,18 @@ function drawSpan(
 
   ctx.lineWidth = 2;
   ctx.strokeStyle = color;
+  // Apply kind-specific dash pattern (empty array = solid). Reset after the
+  // main line so ticks and labels are always drawn solid.
+  ctx.setLineDash(SPAN_DASH[s.kind]);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
 
-  // End ticks (perpendicular caps).
+  // Reset to solid before drawing end ticks and label so they stay crisp.
+  ctx.setLineDash([]);
+
+  // End ticks (perpendicular caps, always solid).
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(x1 - px * SPAN_TICK_HALF, y1 - py * SPAN_TICK_HALF);
@@ -1173,6 +1203,9 @@ function App() {
       } else if (e.key.toLowerCase() === "e" && !cmd) {
         e.preventDefault();
         setActiveType("horizontal_span");
+      } else if (e.key.toLowerCase() === "r" && !cmd) {
+        e.preventDefault();
+        setActiveType("flag_to_ground_span");
       } else if (e.key === "[") {
         e.preventDefault();
         setZoomRadius((r) => Math.max(ZOOM_MIN, r - 5));
@@ -1729,10 +1762,11 @@ function App() {
       if (c.kind !== "wire_ground") acc[c.kind]++;
       return acc;
     },
-    { vertical_span: 0, horizontal_span: 0 }
+    { vertical_span: 0, horizontal_span: 0, flag_to_ground_span: 0 }
   );
   const verticalSpanCount = spanCounts.vertical_span;
   const horizontalSpanCount = spanCounts.horizontal_span;
+  const flagToGroundSpanCount = spanCounts.flag_to_ground_span;
 
   const filename = image ? pathBasename(image.path) : null;
   const saveStateText = dirty
@@ -1961,7 +1995,7 @@ function App() {
               <div className="rail-section">
                 <div className="rail-label">
                   <span>Annotation</span>
-                  <span className="key-hint">Q · W · E</span>
+                  <span className="key-hint">Q · W · E · R</span>
                 </div>
                 <div className="segmented">
                   <button
@@ -2017,6 +2051,24 @@ function App() {
                     title="Horizontal span (E)"
                   >
                     Horiz. span
+                  </button>
+                  <button
+                    className={`segmented-btn ${
+                      activeType === "flag_to_ground_span" ? "active" : ""
+                    }`}
+                    style={
+                      activeType === "flag_to_ground_span"
+                        ? {
+                            background: "var(--text-primary)",
+                            color: "var(--bg-app)",
+                            borderColor: "var(--text-primary)",
+                          }
+                        : undefined
+                    }
+                    onClick={() => setActiveType("flag_to_ground_span")}
+                    title="Flag-to-ground span (R)"
+                  >
+                    Flag→ground
                   </button>
                 </div>
               </div>
@@ -2095,6 +2147,9 @@ function App() {
                   <span className="sep">·</span>
                   <span className="lbl">H</span>
                   <span className="mono total">{horizontalSpanCount}</span>
+                  <span className="sep">·</span>
+                  <span className="lbl">G</span>
+                  <span className="mono total">{flagToGroundSpanCount}</span>
                 </div>
                 <div className="counts-line">
                   <span style={{ color: TRANSECT_COLORS.L }}>L</span>

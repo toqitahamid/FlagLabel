@@ -10,7 +10,7 @@ export type WireGroundPoint = {
 
 // Span types. The union widens with horizontal / flag-to-ground spans in
 // later slices; keep this a string-union so callers can switch exhaustively.
-export type SpanType = "vertical" | "horizontal";
+export type SpanType = "vertical" | "horizontal" | "flag_to_ground";
 
 export type VerticalSpan = {
   kind: "vertical_span";
@@ -32,8 +32,20 @@ export type HorizontalSpan = {
   distance: number;
 };
 
-// The union widens further with flag-to-ground spans in a later slice.
-export type Annotation = WireGroundPoint | VerticalSpan | HorizontalSpan;
+// Flag-body top → wire–ground intersection. Upper endpoint (flag top, smaller v)
+// stored as (u1,v1); lower endpoint (ground) stored as (u2,v2) — same ordering
+// rule as VerticalSpan. Average length: 49.53 cm (ADR-0002).
+export type FlagToGroundSpan = {
+  kind: "flag_to_ground_span";
+  u1: number;
+  v1: number;
+  u2: number;
+  v2: number;
+  transect: Transect;
+  distance: number;
+};
+
+export type Annotation = WireGroundPoint | VerticalSpan | HorizontalSpan | FlagToGroundSpan;
 
 export type Counts = { L: number; C: number; R: number };
 
@@ -60,7 +72,10 @@ export function canonicalizeSpan(
   p2: Point
 ): SpanEndpoints {
   switch (type) {
-    case "vertical": {
+    case "vertical":
+    case "flag_to_ground": {
+      // Upper-first: smaller-v point as (u1,v1); ties on v break on smaller u.
+      // flag_to_ground shares this rule: u1,v1 = flag-body top; u2,v2 = ground.
       const swap =
         p2.v < p1.v || (p2.v === p1.v && p2.u < p1.u);
       const a = swap ? p2 : p1;
@@ -70,7 +85,7 @@ export function canonicalizeSpan(
     case "horizontal": {
       // Left-first: smaller-u point as (u1,v1). Ties on u break on smaller v
       // (mirror of vertical's tie-break on u) so the result is deterministic
-      // and order-independent. Slice 4 (flag_to_ground) adds here.
+      // and order-independent.
       const swap =
         p2.u < p1.u || (p2.u === p1.u && p2.v < p1.v);
       const a = swap ? p2 : p1;
