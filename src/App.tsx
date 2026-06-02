@@ -39,7 +39,13 @@ import {
 // classic dot; "vertical_span" is the two-click flag vertical span;
 // "horizontal_span" is the two-click flag horizontal span.
 type ActiveAnnoType = ActiveType;
-const SPAN_TYPE_FOR: Partial<Record<ActiveAnnoType, SpanType>> = {
+// Annotation kind → SpanType (or null for the non-span wire-ground kind). A
+// FULL Record over every kind, so adding a new span kind in Slice 4 hard-errors
+// here until an entry is added — matching SPAN_KIND_FOR / SPAN_LABEL_SUFFIX /
+// canonicalizeSpan. The call site's `if (!spanType) return;` handles the null
+// (wire-ground) case unchanged.
+const SPAN_TYPE_FOR: Record<ActiveAnnoType, SpanType | null> = {
+  wire_ground: null,
   vertical_span: "vertical",
   horizontal_span: "horizontal",
 };
@@ -1716,14 +1722,17 @@ function App() {
   // wire-ground, so spans never inflate these counts).
   const counts = countsFromAnnotations(clicks);
   const wireGroundCount = counts.L + counts.C + counts.R;
-  const verticalSpanCount = clicks.reduce(
-    (n, c) => (c.kind === "vertical_span" ? n + 1 : n),
-    0
+  // Per-span-kind tally in a single pass. Adding a new span kind extends the
+  // initial Record (compiler-enforced via Span["kind"]) without a second loop.
+  const spanCounts = clicks.reduce<Record<Span["kind"], number>>(
+    (acc, c) => {
+      if (c.kind !== "wire_ground") acc[c.kind]++;
+      return acc;
+    },
+    { vertical_span: 0, horizontal_span: 0 }
   );
-  const horizontalSpanCount = clicks.reduce(
-    (n, c) => (c.kind === "horizontal_span" ? n + 1 : n),
-    0
-  );
+  const verticalSpanCount = spanCounts.vertical_span;
+  const horizontalSpanCount = spanCounts.horizontal_span;
 
   const filename = image ? pathBasename(image.path) : null;
   const saveStateText = dirty

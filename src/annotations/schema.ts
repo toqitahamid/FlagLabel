@@ -1,4 +1,9 @@
-import type { Annotation, Transect, HorizontalSpan } from "./model";
+import type { Annotation, Transect, VerticalSpan, HorizontalSpan } from "./model";
+
+// The span members of the Annotation union (everything with endpoints). Mirrors
+// the `Span` alias in App.tsx; defined here so the schema layer stays
+// self-contained.
+type Span = Extract<Annotation, { u1: number }>;
 
 export const SCHEMA_VERSION = 2;
 
@@ -66,7 +71,7 @@ export function buildAnnotationFile(
     }));
 
   const flag_vertical_spans = annotations
-    .filter((a): a is Extract<Annotation, { kind: "vertical_span" }> => a.kind === "vertical_span")
+    .filter((a): a is VerticalSpan => a.kind === "vertical_span")
     .map((a) => ({
       u1: a.u1,
       v1: a.v1,
@@ -106,6 +111,42 @@ function isTransect(x: unknown): x is Transect {
   return x === "L" || x === "C" || x === "R";
 }
 
+// Parse one span array under `key`, tagging valid items with `kind`. Per-item
+// validation (object check → 6-field type checks); malformed items are skipped.
+// Shared by every span kind — Slice 4 (flag_to_ground) adds one more call.
+function parseSpanArray(
+  obj: Record<string, unknown>,
+  key: string,
+  kind: Span["kind"]
+): Span[] {
+  const arr = obj[key];
+  if (!Array.isArray(arr)) return [];
+  const out: Span[] = [];
+  for (const s of arr) {
+    if (typeof s !== "object" || s === null) continue;
+    const rec = s as Record<string, unknown>;
+    if (
+      typeof rec.u1 !== "number" ||
+      typeof rec.v1 !== "number" ||
+      typeof rec.u2 !== "number" ||
+      typeof rec.v2 !== "number" ||
+      !isTransect(rec.transect) ||
+      typeof rec.distance !== "number"
+    )
+      continue;
+    out.push({
+      kind,
+      u1: rec.u1,
+      v1: rec.v1,
+      u2: rec.u2,
+      v2: rec.v2,
+      transect: rec.transect,
+      distance: rec.distance,
+    });
+  }
+  return out;
+}
+
 export function parseAnnotationFile(json: unknown): Annotation[] {
   if (typeof json !== "object" || json === null) return [];
   const obj = json as Record<string, unknown>;
@@ -133,57 +174,8 @@ export function parseAnnotationFile(json: unknown): Annotation[] {
     }
   }
 
-  const spans = obj.flag_vertical_spans;
-  if (Array.isArray(spans)) {
-    for (const s of spans) {
-      if (typeof s !== "object" || s === null) continue;
-      const rec = s as Record<string, unknown>;
-      if (
-        typeof rec.u1 !== "number" ||
-        typeof rec.v1 !== "number" ||
-        typeof rec.u2 !== "number" ||
-        typeof rec.v2 !== "number" ||
-        !isTransect(rec.transect) ||
-        typeof rec.distance !== "number"
-      )
-        continue;
-      result.push({
-        kind: "vertical_span",
-        u1: rec.u1,
-        v1: rec.v1,
-        u2: rec.u2,
-        v2: rec.v2,
-        transect: rec.transect,
-        distance: rec.distance,
-      });
-    }
-  }
-
-  const hspans = obj.flag_horizontal_spans;
-  if (Array.isArray(hspans)) {
-    for (const s of hspans) {
-      if (typeof s !== "object" || s === null) continue;
-      const rec = s as Record<string, unknown>;
-      if (
-        typeof rec.u1 !== "number" ||
-        typeof rec.v1 !== "number" ||
-        typeof rec.u2 !== "number" ||
-        typeof rec.v2 !== "number" ||
-        !isTransect(rec.transect) ||
-        typeof rec.distance !== "number"
-      )
-        continue;
-      result.push({
-        kind: "horizontal_span",
-        u1: rec.u1,
-        v1: rec.v1,
-        u2: rec.u2,
-        v2: rec.v2,
-        transect: rec.transect,
-        distance: rec.distance,
-      });
-    }
-  }
+  result.push(...parseSpanArray(obj, "flag_vertical_spans", "vertical_span"));
+  result.push(...parseSpanArray(obj, "flag_horizontal_spans", "horizontal_span"));
 
   return result;
 }
