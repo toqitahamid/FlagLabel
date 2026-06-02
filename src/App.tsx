@@ -12,15 +12,17 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { Store } from "@tauri-apps/plugin-store";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
-
-type Transect = "L" | "C" | "R";
-
-type Click = {
-  u: number;
-  v: number;
-  transect: Transect;
-  distance: number;
-};
+import {
+  type Annotation,
+  type Transect,
+  type Counts,
+  countsFromAnnotations,
+} from "./annotations/model";
+import {
+  buildAnnotationFile,
+  parseAnnotationFile,
+  type FileMeta,
+} from "./annotations/schema";
 
 type LoadedImage = {
   path: string;
@@ -85,14 +87,6 @@ function clickJsonPathFor(imagePath: string, clicksDir: string): string {
   return joinPath(clicksDir, name);
 }
 
-type Counts = { L: number; C: number; R: number };
-
-function countsFromClicks(cs: Click[]): Counts {
-  const out: Counts = { L: 0, C: 0, R: 0 };
-  for (const c of cs) out[c.transect]++;
-  return out;
-}
-
 const VIEW_SCALE_MIN = 1;
 const VIEW_SCALE_MAX = 10;
 const WHEEL_ZOOM_RATE = 0.0015;
@@ -125,7 +119,7 @@ const HIT_TEST_RADIUS_CSS_PX = 12;
 function hitTestClick(
   u: number,
   v: number,
-  cs: Click[],
+  cs: Annotation[],
   effScale: number
 ): number | null {
   // Radius converted into image space so the on-screen target stays roughly
@@ -143,29 +137,6 @@ function hitTestClick(
     }
   }
   return bestIdx;
-}
-
-function buildClickFile(
-  image: LoadedImage,
-  clicks: Click[],
-  appVersion: string
-) {
-  return {
-    site: siteFromPath(image.path),
-    image: pathBasename(image.path),
-    image_w: image.width,
-    image_h: image.height,
-    click_type: "wire_ground_intersection",
-    note: "Click at the wire-ground intersection (base), not the flag head.",
-    created_at: new Date().toISOString(),
-    app_version: appVersion,
-    clicks: clicks.map((c) => ({
-      u: c.u,
-      v: c.v,
-      transect: c.transect,
-      distance: c.distance,
-    })),
-  };
 }
 
 function fmtTimeOfDay(ts: number): string {
@@ -300,7 +271,7 @@ function KeyboardHelp({
   );
 }
 
-function DistanceSparkline({ clicks }: { clicks: Click[] }) {
+function DistanceSparkline({ clicks }: { clicks: Annotation[] }) {
   const bins: Counts[] = Array.from({ length: 15 }, () => ({
     L: 0,
     C: 0,
@@ -389,7 +360,7 @@ function drawMarker(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  c: Click,
+  c: Annotation,
   scale: number
 ) {
   const color = TRANSECT_COLORS[c.transect];
@@ -417,7 +388,7 @@ function drawMarker(
 function App() {
   const [image, setImage] = useState<LoadedImage | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [clicks, setClicks] = useState<Click[]>([]);
+  const [clicks, setClicks] = useState<Annotation[]>([]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [zoomRadius, setZoomRadius] = useState<number>(ZOOM_DEFAULT);
@@ -600,9 +571,7 @@ function App() {
             path: jsonPath,
           });
           if (!content) continue;
-          const data = JSON.parse(content);
-          if (!Array.isArray(data.clicks)) continue;
-          result[path] = countsFromClicks(data.clicks as Click[]);
+          result[path] = countsFromAnnotations(parseAnnotationFile(JSON.parse(content)));
         } catch (e) {
           console.error("Failed to read", jsonPath, e);
         }
@@ -623,12 +592,10 @@ function App() {
       try {
         const content = await invoke<string | null>("read_text_file", { path });
         if (cancelled || !content) return;
-        const data = JSON.parse(content);
-        if (Array.isArray(data.clicks)) {
-          setClicks(data.clicks as Click[]);
-          setDirty(false);
-          setLastSavedAt(Date.now());
-        }
+        const anns = parseAnnotationFile(JSON.parse(content));
+        setClicks(anns);
+        setDirty(false);
+        setLastSavedAt(Date.now());
       } catch (e) {
         console.error("Auto-load failed", e);
       }
@@ -658,7 +625,13 @@ function App() {
       }
     }
     const path = expectedJsonPath(image, dir);
-    const data = buildClickFile(image, clicks, appVersion);
+    const meta: FileMeta = {
+      site: siteFromPath(image.path),
+      image: pathBasename(image.path),
+      image_w: image.width,
+      image_h: image.height,
+    };
+    const data = buildAnnotationFile(meta, clicks, appVersion, new Date().toISOString());
     const content = JSON.stringify(data, null, 2);
     try {
       await invoke("write_text_file", { path, content });
@@ -666,7 +639,7 @@ function App() {
       setDirty(false);
       setImageCounts((prev) => ({
         ...prev,
-        [image.path]: countsFromClicks(clicks),
+        [image.path]: countsFromAnnotations(clicks),
       }));
     } catch (e) {
       console.error("Save failed", e);
@@ -1276,7 +1249,7 @@ function App() {
     (u: number, v: number) => {
       setClicks((prev) => [
         ...prev,
-        { u, v, transect: currentTransect, distance: currentDistance },
+        { kind: "wire_ground", u, v, transect: currentTransect, distance: currentDistance },
       ]);
       setDirty(true);
       if (autoAdvance) {
@@ -1563,7 +1536,7 @@ function App() {
                     folderImages.filter((p) => {
                       const c =
                         image?.path === p
-                          ? countsFromClicks(clicks)
+                          ? countsFromAnnotations(clicks)
                           : imageCounts[p];
                       return c && c.L + c.C + c.R > 0;
                     }).length
@@ -1577,7 +1550,7 @@ function App() {
             <ul className="image-list">
               {folderImages.map((path, idx) => {
                 const isActive = image?.path === path;
-                const liveCounts = isActive ? countsFromClicks(clicks) : null;
+                const liveCounts = isActive ? countsFromAnnotations(clicks) : null;
                 const persisted = imageCounts[path];
                 const rowCounts = liveCounts ?? persisted ?? null;
                 const total = rowCounts
