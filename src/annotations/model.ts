@@ -49,7 +49,6 @@ export function canonicalizeSpan(
   p1: Point,
   p2: Point
 ): SpanEndpoints {
-  // Exhaustive over SpanType today; switch makes future types explicit.
   switch (type) {
     case "vertical": {
       const swap =
@@ -57,6 +56,13 @@ export function canonicalizeSpan(
       const a = swap ? p2 : p1;
       const b = swap ? p1 : p2;
       return { u1: a.u, v1: a.v, u2: b.u, v2: b.v };
+    }
+    default: {
+      // Compile-time exhaustiveness guard: tsconfig lacks noImplicitReturns,
+      // so without this a newly-added SpanType would silently fall through to
+      // `undefined` and crash callers that destructure the result.
+      const _exhaustive: never = type;
+      return _exhaustive;
     }
   }
 }

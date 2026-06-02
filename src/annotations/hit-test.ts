@@ -1,8 +1,8 @@
 import type { Annotation, Point } from "./model";
 
-// Annotation `kind` for each active annotation type. Widens with span types
-// in later slices alongside `SpanType`.
-export type ActiveType = "wire_ground" | "vertical_span";
+// Active annotation type == an annotation `kind`. Derived from the union so it
+// auto-widens with new span kinds in later slices.
+export type ActiveType = Annotation["kind"];
 
 // Squared distance from a click to an annotation, using only annotations whose
 // kind matches the active type. For a span this is the distance to the NEARER

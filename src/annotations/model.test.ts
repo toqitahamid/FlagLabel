@@ -66,4 +66,10 @@ describe("canonicalizeSpan (vertical)", () => {
     const r = canonicalizeSpan("vertical", { u: 7, v: 7 }, { u: 7, v: 7 });
     expect(r).toEqual({ u1: 7, v1: 7, u2: 7, v2: 7 });
   });
+
+  it("returns a defined SpanEndpoints for the vertical case (never-guard is compile-time)", () => {
+    const r = canonicalizeSpan("vertical", { u: 0, v: 0 }, { u: 1, v: 9 });
+    expect(r).toBeDefined();
+    expect(r).toEqual({ u1: 0, v1: 0, u2: 1, v2: 9 });
+  });
 });

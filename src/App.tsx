@@ -15,7 +15,6 @@ import "./App.css";
 import {
   type Annotation,
   type WireGroundPoint,
-  type VerticalSpan,
   type Transect,
   type Counts,
   type SpanType,
@@ -41,6 +40,14 @@ import {
 type ActiveAnnoType = ActiveType;
 const SPAN_TYPE_FOR: Partial<Record<ActiveAnnoType, SpanType>> = {
   vertical_span: "vertical",
+};
+
+// SpanType → annotation kind. Keyed on `SpanType` (a full Record), so adding a
+// new span type in Slice 3/4 forces a matching entry here at compile time. The
+// value is narrowed to the span kinds so a completed span object typechecks as
+// a member of the union without widening `kind` back to all annotation kinds.
+const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
+  vertical: "vertical_span",
 };
 
 type LoadedImage = {
@@ -400,6 +407,15 @@ function drawMarker(
 
 const SPAN_TICK_HALF = 7;
 
+// The span members of the Annotation union (everything that has endpoints).
+type Span = Extract<Annotation, { u1: number }>;
+
+// Span kind → label suffix. Keyed on the span kinds (a full Record), so a new
+// span type in Slice 3/4 must add its suffix here at compile time.
+const SPAN_LABEL_SUFFIX: Record<Span["kind"], string> = {
+  vertical_span: "V",
+};
+
 // Draw a completed span as a tick-ended line in its transect color, labeled
 // e.g. "L3·V". Coordinates x1/y1/x2/y2 are already in canvas (CSS) pixels.
 function drawSpan(
@@ -408,7 +424,7 @@ function drawSpan(
   y1: number,
   x2: number,
   y2: number,
-  s: VerticalSpan
+  s: Span
 ) {
   const color = TRANSECT_COLORS[s.transect];
   // Unit vector along the span and its perpendicular (for end ticks).
@@ -434,7 +450,12 @@ function drawSpan(
   ctx.lineTo(x2 + px * SPAN_TICK_HALF, y2 + py * SPAN_TICK_HALF);
   ctx.stroke();
 
-  drawLabel(ctx, `${s.transect}${fmtDistance(s.distance)}·V`, x1 + 6, y1 - 4);
+  drawLabel(
+    ctx,
+    `${s.transect}${fmtDistance(s.distance)}·${SPAN_LABEL_SUFFIX[s.kind]}`,
+    x1 + 6,
+    y1 - 4
+  );
 }
 
 // Draw the live ghost line from a pending span's first endpoint to the cursor.
@@ -1164,6 +1185,12 @@ function App() {
     resetView,
   ]);
 
+  // Cursor that matters for the main-canvas repaint: only non-null while a span
+  // is mid-placement (drives the ghost line). When idle this is null on every
+  // render, so the main-draw effect below does NOT re-run on idle mousemove —
+  // the full image + markers are not re-stroked just from hovering.
+  const ghostCursor = pending.kind === "awaitingSecond" ? cursor : null;
+
   // Main canvas
   useEffect(() => {
     if (!image || !imgRef.current || !canvasRef.current || !containerRef.current) {
@@ -1238,13 +1265,14 @@ function App() {
       }
 
       // Live ghost line from the pending span's first endpoint to the cursor.
-      if (pending.kind === "awaitingSecond" && cursor) {
+      // ghostCursor is non-null only while awaiting the second click.
+      if (pending.kind === "awaitingSecond" && ghostCursor) {
         drawGhostLine(
           ctx,
           offsetX + pending.first.u * effScale,
           offsetY + pending.first.v * effScale,
-          offsetX + cursor.u * effScale,
-          offsetY + cursor.v * effScale,
+          offsetX + ghostCursor.u * effScale,
+          offsetY + ghostCursor.v * effScale,
           pending.transect
         );
       }
@@ -1254,7 +1282,9 @@ function App() {
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY, pending, cursor]);
+    // ghostCursor (not cursor) gates repaint: null while idle so idle hover
+    // doesn't re-run; the cursor object changes each move while placing.
+  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY, pending, ghostCursor]);
 
   // Zoom panel
   useEffect(() => {
@@ -1448,7 +1478,7 @@ function App() {
         setClicks((prev) => [
           ...prev,
           {
-            kind: "vertical_span",
+            kind: SPAN_KIND_FOR[spanType],
             u1: ep.u1,
             v1: ep.v1,
             u2: ep.u2,
