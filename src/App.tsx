@@ -34,6 +34,7 @@ import {
   pendingSpanReducer,
   IDLE as PENDING_IDLE,
 } from "./annotations/pending-span";
+import { findCollision } from "./annotations/collision";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
@@ -311,6 +312,65 @@ function KeyboardHelp({
   );
 }
 
+// A pending duplicate-collision decision. `candidate` is the fully-formed,
+// canonicalized annotation the labeler just placed; `existingIndex` is the index
+// in `clicks` of the colliding annotation (same {transect, distance, kind}).
+type PendingCollision = {
+  candidate: Annotation;
+  existingIndex: number;
+} | null;
+
+// Blocking three-way confirm shown when a placement would duplicate an existing
+// {transect, distance, kind}. Mirrors the KeyboardHelp backdrop/dialog pattern.
+// The choice is replace / keep both / cancel — no native 2-button ask works here.
+function CollisionConfirm({
+  pending,
+  onReplace,
+  onKeepBoth,
+  onCancel,
+}: {
+  pending: NonNullable<PendingCollision>;
+  onReplace: () => void;
+  onKeepBoth: () => void;
+  onCancel: () => void;
+}) {
+  const a = pending.candidate;
+  const label = `${a.transect}${fmtDistance(a.distance)}`;
+  return (
+    <div className="help-backdrop" onClick={onCancel}>
+      <div
+        className="collision-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Duplicate annotation"
+      >
+        <div className="help-header">
+          <div className="help-title">Duplicate annotation</div>
+        </div>
+        <p className="help-intro">
+          An <strong>{label}</strong> {KIND_NAME[a.kind]} already exists. Replace
+          the existing one, keep both, or cancel this placement?
+        </p>
+        <div className="collision-actions">
+          <button className="collision-btn" onClick={onReplace}>
+            Replace
+          </button>
+          <button className="collision-btn" onClick={onKeepBoth}>
+            Keep both
+          </button>
+          <button className="collision-btn collision-btn-cancel" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+        <div className="help-footer">
+          <span className="dim">Press Esc to cancel</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DistanceSparkline({ clicks }: { clicks: Annotation[] }) {
   const bins: Counts[] = Array.from({ length: 15 }, () => ({
     L: 0,
@@ -446,6 +506,16 @@ const SPAN_LABEL_SUFFIX: Record<Span["kind"], string> = {
   flag_to_ground_span: "G",
 };
 
+// Human-readable name for each annotation kind, used in the collision-confirm
+// message (e.g. "L3 vertical span already exists"). Keyed on the full kind union
+// (a complete Record) so a new kind must declare its phrase here at compile time.
+const KIND_NAME: Record<Annotation["kind"], string> = {
+  wire_ground: "wire–ground point",
+  vertical_span: "vertical span",
+  horizontal_span: "horizontal span",
+  flag_to_ground_span: "flag-to-ground span",
+};
+
 // Dash pattern for each span kind. Empty array = solid line. flag_to_ground
 // renders dashed so it reads as distinct from a vertical span that may share
 // its top endpoint. Keyed on span kinds (full Record) so new kinds declare
@@ -565,6 +635,18 @@ function App() {
   const [activeType, setActiveType] = useState<ActiveAnnoType>("wire_ground");
   // Global pending-span state (sequential two-click placement across surfaces).
   const [pending, dispatchPending] = useReducer(pendingSpanReducer, PENDING_IDLE);
+
+  // Pending duplicate-collision decision. Non-null = the confirm modal is open
+  // and blocks other interaction until the labeler resolves it.
+  const [pendingCollision, setPendingCollision] = useState<PendingCollision>(null);
+
+  // Cancel = discard the candidate entirely: no append, no dirty change, no
+  // auto-advance. Declared here (before the keyboard effect that references it)
+  // so it's in scope for Escape-to-cancel. Replace / keep-both live further down,
+  // alongside the commit helper they share.
+  const resolveCollisionCancel = useCallback(() => {
+    setPendingCollision(null);
+  }, []);
 
   const [clicksDir, setClicksDir] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -1108,6 +1190,17 @@ function App() {
       const inInput = e.target instanceof HTMLInputElement;
       const cmd = e.metaKey || e.ctrlKey;
 
+      // The collision-confirm modal is fully modal: swallow ALL keys (including
+      // Space-pan, type switches, distance steps, undo, delete) while it's open.
+      // Escape resolves it as Cancel.
+      if (pendingCollision) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          resolveCollisionCancel();
+        }
+        return;
+      }
+
       // Track Space for pan-mode (when not in an input). Prevent default so
       // browser doesn't scroll the page on space.
       if (e.code === "Space" && !inInput) {
@@ -1237,6 +1330,8 @@ function App() {
     adjustSelectedDistance,
     zoomByFactor,
     resetView,
+    pendingCollision,
+    resolveCollisionCancel,
   ]);
 
   // Cursor that matters for the main-canvas repaint: only non-null while a span
@@ -1498,22 +1593,57 @@ function App() {
     [image, viewScale, viewPanX, viewPanY]
   );
 
-  const addClickAt = useCallback(
-    (u: number, v: number) => {
-      setClicks((prev) => [
-        ...prev,
-        { kind: "wire_ground", u, v, transect: currentTransect, distance: currentDistance },
-      ]);
-      setDirty(true);
-      if (autoAdvance) {
-        const intDist = Math.round(currentDistance);
-        const idx = CANONICAL_DISTANCES.indexOf(intDist);
-        if (idx >= 0 && idx + 1 < CANONICAL_DISTANCES.length) {
-          setCurrentDistance(CANONICAL_DISTANCES[idx + 1]);
-        }
+  // Wire-ground-only distance auto-advance (1→2→…→15). Pulled out so both the
+  // no-collision commit and the post-confirm replace/keep-both paths apply it
+  // identically. No-op for spans.
+  const applyAutoAdvance = useCallback(
+    (committed: Annotation) => {
+      if (committed.kind !== "wire_ground") return;
+      if (!autoAdvance) return;
+      const intDist = Math.round(committed.distance);
+      const idx = CANONICAL_DISTANCES.indexOf(intDist);
+      if (idx >= 0 && idx + 1 < CANONICAL_DISTANCES.length) {
+        setCurrentDistance(CANONICAL_DISTANCES[idx + 1]);
       }
     },
-    [currentTransect, currentDistance, autoAdvance]
+    [autoAdvance]
+  );
+
+  // Single commit path for a fully-formed annotation. Checks for a duplicate
+  // {transect, distance, kind}: if none, append + dirty + (wire-ground) auto-
+  // advance; if one exists, divert to the blocking confirm modal (no append, no
+  // dirty) and let the labeler choose replace / keep both / cancel. Reads `clicks`
+  // fresh (it's in this callback's deps) so the collision check never runs against
+  // a stale snapshot.
+  const commitAnnotation = useCallback(
+    (candidate: Annotation) => {
+      const existingIndex = findCollision(clicks, {
+        transect: candidate.transect,
+        distance: candidate.distance,
+        kind: candidate.kind,
+      });
+      if (existingIndex === null) {
+        setClicks((prev) => [...prev, candidate]);
+        setDirty(true);
+        applyAutoAdvance(candidate);
+        return;
+      }
+      setPendingCollision({ candidate, existingIndex });
+    },
+    [clicks, applyAutoAdvance]
+  );
+
+  const addClickAt = useCallback(
+    (u: number, v: number) => {
+      commitAnnotation({
+        kind: "wire_ground",
+        u,
+        v,
+        transect: currentTransect,
+        distance: currentDistance,
+      });
+    },
+    [commitAnnotation, currentTransect, currentDistance]
   );
 
   // Place an annotation of the active type at image coords (u,v). Wire-ground
@@ -1529,20 +1659,21 @@ function App() {
       if (!spanType) return;
       if (pending.kind === "awaitingSecond") {
         const ep = canonicalizeSpan(spanType, pending.first, { u, v });
-        setClicks((prev) => [
-          ...prev,
-          {
-            kind: SPAN_KIND_FOR[spanType],
-            u1: ep.u1,
-            v1: ep.v1,
-            u2: ep.u2,
-            v2: ep.v2,
-            transect: pending.transect,
-            distance: pending.distance,
-          },
-        ]);
-        setDirty(true);
+        const candidate: Annotation = {
+          kind: SPAN_KIND_FOR[spanType],
+          u1: ep.u1,
+          v1: ep.v1,
+          u2: ep.u2,
+          v2: ep.v2,
+          transect: pending.transect,
+          distance: pending.distance,
+        };
+        // Reset pending → idle FIRST (clears the ghost line; the span is now
+        // fully captured in `candidate`), then commit. commitAnnotation handles
+        // the dirty flag and any collision divert — so on a cancelled collision
+        // the pending state is still cleared and `dirty` stays untouched.
         dispatchPending({ type: "secondClick", point: { u, v } });
+        commitAnnotation(candidate);
       } else {
         dispatchPending({
           type: "firstClick",
@@ -1553,8 +1684,31 @@ function App() {
         });
       }
     },
-    [activeType, pending, currentTransect, currentDistance, addClickAt]
+    [activeType, pending, currentTransect, currentDistance, addClickAt, commitAnnotation]
   );
+
+  // Collision-confirm resolvers. The modal is guarded so `clicks` cannot be
+  // reordered while open, keeping `existingIndex` valid.
+  const resolveCollisionReplace = useCallback(() => {
+    if (!pendingCollision) return;
+    const { candidate, existingIndex } = pendingCollision;
+    setClicks((prev) => [
+      ...prev.filter((_, i) => i !== existingIndex),
+      candidate,
+    ]);
+    setDirty(true);
+    applyAutoAdvance(candidate);
+    setPendingCollision(null);
+  }, [pendingCollision, applyAutoAdvance]);
+
+  const resolveCollisionKeepBoth = useCallback(() => {
+    if (!pendingCollision) return;
+    const { candidate } = pendingCollision;
+    setClicks((prev) => [...prev, candidate]);
+    setDirty(true);
+    applyAutoAdvance(candidate);
+    setPendingCollision(null);
+  }, [pendingCollision, applyAutoAdvance]);
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -2180,6 +2334,15 @@ function App() {
         <KeyboardHelp
           onClose={() => setShowHelp(false)}
           appVersion={appVersion}
+        />
+      )}
+
+      {pendingCollision && (
+        <CollisionConfirm
+          pending={pendingCollision}
+          onReplace={resolveCollisionReplace}
+          onKeepBoth={resolveCollisionKeepBoth}
+          onCancel={resolveCollisionCancel}
         />
       )}
 

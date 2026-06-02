@@ -720,6 +720,53 @@ body,
   }
 }
 
+/* Collision-confirm modal (reuses .help-backdrop / .help-header / .help-intro) */
+
+.collision-modal {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 12px 24px rgba(0, 0, 0, 0.35), 0 24px 60px rgba(0, 0, 0, 0.45);
+  padding: 20px 24px 16px;
+  color: var(--text-primary);
+  animation: help-modal-in 180ms var(--ease-out);
+}
+
+.collision-modal .help-intro strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.collision-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.collision-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color 60ms ease, border-color 60ms ease;
+}
+
+.collision-btn:hover {
+  background: var(--bg-surface);
+  border-color: var(--text-tertiary);
+}
+
+.collision-btn-cancel {
+  color: var(--text-secondary);
+}
+
 /* Slider */
 
 .slider-row {
