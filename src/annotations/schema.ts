@@ -133,7 +133,7 @@ function isTransect(x: unknown): x is Transect {
 
 // Parse one span array under `key`, tagging valid items with `kind`. Per-item
 // validation (object check → 6-field type checks); malformed items are skipped.
-// Shared by every span kind — Slice 4 (flag_to_ground) adds one more call.
+// Shared by every span kind; one call per span array in parseAnnotationFile.
 function parseSpanArray(
   obj: Record<string, unknown>,
   key: string,
