@@ -710,6 +710,13 @@ function App() {
         imgRef.current = img;
         setClicks([]);
         setSelectedIdx(null);
+        // Dismiss any open collision modal on EVERY image switch (native ⌘O/⌘⇧O,
+        // folder open, in-app navigation all funnel through here). The candidate
+        // + existingIndex are tied to the outgoing image's clicks array; leaving
+        // the modal open would let Replace/Keep-both write the old image's
+        // annotation into the new image. Discarding the candidate is the safe
+        // resolution.
+        setPendingCollision(null);
         setCursor(null);
         setCurrentDistance(1);
         setDirty(false);
