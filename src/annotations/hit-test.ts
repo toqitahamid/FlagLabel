@@ -19,7 +19,7 @@ function distanceSqToActive(
     const dy = a.v - point.v;
     return dx * dx + dy * dy;
   }
-  // vertical_span: nearer endpoint wins
+  // span (vertical_span / horizontal_span): nearer endpoint wins
   const dx1 = a.u1 - point.u;
   const dy1 = a.v1 - point.v;
   const dx2 = a.u2 - point.u;

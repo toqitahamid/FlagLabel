@@ -36,10 +36,12 @@ import {
 } from "./annotations/pending-span";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
-// classic dot; "vertical_span" is the two-click flag vertical span.
+// classic dot; "vertical_span" is the two-click flag vertical span;
+// "horizontal_span" is the two-click flag horizontal span.
 type ActiveAnnoType = ActiveType;
 const SPAN_TYPE_FOR: Partial<Record<ActiveAnnoType, SpanType>> = {
   vertical_span: "vertical",
+  horizontal_span: "horizontal",
 };
 
 // SpanType → annotation kind. Keyed on `SpanType` (a full Record), so adding a
@@ -48,6 +50,7 @@ const SPAN_TYPE_FOR: Partial<Record<ActiveAnnoType, SpanType>> = {
 // a member of the union without widening `kind` back to all annotation kinds.
 const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
   vertical: "vertical_span",
+  horizontal: "horizontal_span",
 };
 
 type LoadedImage = {
@@ -173,7 +176,7 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: "Labels",
     rows: [
-      ["Annotation type wire–ground / vertical span", "Q / W"],
+      ["Annotation type wire–ground / vert. span / horiz. span", "Q / W / E"],
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
@@ -184,6 +187,14 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: "Vertical span (W)",
     rows: [
       ["Place endpoint 1, then endpoint 2", "click ×2"],
+      ["Endpoints span canvas + zoom panel", "either surface"],
+      ["Cancel a half-placed span", "Esc"],
+    ],
+  },
+  {
+    title: "Horizontal span (E)",
+    rows: [
+      ["Place left endpoint, then right endpoint", "click ×2"],
       ["Endpoints span canvas + zoom panel", "either surface"],
       ["Cancel a half-placed span", "Esc"],
     ],
@@ -414,6 +425,7 @@ type Span = Extract<Annotation, { u1: number }>;
 // span type in Slice 3/4 must add its suffix here at compile time.
 const SPAN_LABEL_SUFFIX: Record<Span["kind"], string> = {
   vertical_span: "V",
+  horizontal_span: "H",
 };
 
 // Draw a completed span as a tick-ended line in its transect color, labeled
@@ -1152,6 +1164,9 @@ function App() {
       } else if (e.key.toLowerCase() === "w" && !cmd) {
         e.preventDefault();
         setActiveType("vertical_span");
+      } else if (e.key.toLowerCase() === "e" && !cmd) {
+        e.preventDefault();
+        setActiveType("horizontal_span");
       } else if (e.key === "[") {
         e.preventDefault();
         setZoomRadius((r) => Math.max(ZOOM_MIN, r - 5));
@@ -1705,6 +1720,10 @@ function App() {
     (n, c) => (c.kind === "vertical_span" ? n + 1 : n),
     0
   );
+  const horizontalSpanCount = clicks.reduce(
+    (n, c) => (c.kind === "horizontal_span" ? n + 1 : n),
+    0
+  );
 
   const filename = image ? pathBasename(image.path) : null;
   const saveStateText = dirty
@@ -1933,7 +1952,7 @@ function App() {
               <div className="rail-section">
                 <div className="rail-label">
                   <span>Annotation</span>
-                  <span className="key-hint">Q · W</span>
+                  <span className="key-hint">Q · W · E</span>
                 </div>
                 <div className="segmented">
                   <button
@@ -1971,6 +1990,24 @@ function App() {
                     title="Vertical span (W)"
                   >
                     Vert. span
+                  </button>
+                  <button
+                    className={`segmented-btn ${
+                      activeType === "horizontal_span" ? "active" : ""
+                    }`}
+                    style={
+                      activeType === "horizontal_span"
+                        ? {
+                            background: "var(--text-primary)",
+                            color: "var(--bg-app)",
+                            borderColor: "var(--text-primary)",
+                          }
+                        : undefined
+                    }
+                    onClick={() => setActiveType("horizontal_span")}
+                    title="Horizontal span (E)"
+                  >
+                    Horiz. span
                   </button>
                 </div>
               </div>
@@ -2046,6 +2083,9 @@ function App() {
                   <span className="sep">·</span>
                   <span className="lbl">V</span>
                   <span className="mono total">{verticalSpanCount}</span>
+                  <span className="sep">·</span>
+                  <span className="lbl">H</span>
+                  <span className="mono total">{horizontalSpanCount}</span>
                 </div>
                 <div className="counts-line">
                   <span style={{ color: TRANSECT_COLORS.L }}>L</span>

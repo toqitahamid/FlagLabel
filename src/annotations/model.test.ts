@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { countsFromAnnotations, canonicalizeSpan, type Annotation } from "./model";
+import type { HorizontalSpan } from "./model";
 
 describe("countsFromAnnotations", () => {
   it("tallies wire-ground annotations per transect", () => {
@@ -71,5 +72,55 @@ describe("canonicalizeSpan (vertical)", () => {
     const r = canonicalizeSpan("vertical", { u: 0, v: 0 }, { u: 1, v: 9 });
     expect(r).toBeDefined();
     expect(r).toEqual({ u1: 0, v1: 0, u2: 1, v2: 9 });
+  });
+});
+
+describe("canonicalizeSpan (horizontal) — left-first ordering", () => {
+  it("stores the smaller-u point as (u1,v1) when p1 is already left", () => {
+    const r = canonicalizeSpan("horizontal", { u: 20, v: 50 }, { u: 80, v: 55 });
+    expect(r).toEqual({ u1: 20, v1: 50, u2: 80, v2: 55 });
+  });
+
+  it("orders left-first regardless of click order (p2 is left)", () => {
+    const r = canonicalizeSpan("horizontal", { u: 80, v: 55 }, { u: 20, v: 50 });
+    expect(r).toEqual({ u1: 20, v1: 50, u2: 80, v2: 55 });
+  });
+
+  it("is deterministic and order-independent for equal u (tie on smaller v)", () => {
+    const a = canonicalizeSpan("horizontal", { u: 50, v: 30 }, { u: 50, v: 10 });
+    const b = canonicalizeSpan("horizontal", { u: 50, v: 10 }, { u: 50, v: 30 });
+    expect(a).toEqual({ u1: 50, v1: 10, u2: 50, v2: 30 });
+    expect(a).toEqual(b);
+  });
+
+  it("orders by u even for a near-horizontal span (tiny u difference still wins)", () => {
+    const r = canonicalizeSpan(
+      "horizontal",
+      { u: 200.5, v: 100 },
+      { u: 200.4, v: 102 }
+    );
+    // 200.4 < 200.5 → the second point is left
+    expect(r).toEqual({ u1: 200.4, v1: 102, u2: 200.5, v2: 100 });
+  });
+
+  it("handles fully coincident points without throwing", () => {
+    const r = canonicalizeSpan("horizontal", { u: 7, v: 7 }, { u: 7, v: 7 });
+    expect(r).toEqual({ u1: 7, v1: 7, u2: 7, v2: 7 });
+  });
+
+  it("ignores horizontal spans in countsFromAnnotations (wire-ground only)", () => {
+    const anns: Annotation[] = [
+      { kind: "wire_ground", u: 1, v: 1, transect: "L", distance: 1 },
+      {
+        kind: "horizontal_span",
+        u1: 10,
+        v1: 50,
+        u2: 80,
+        v2: 55,
+        transect: "C",
+        distance: 3,
+      } satisfies HorizontalSpan,
+    ];
+    expect(countsFromAnnotations(anns)).toEqual({ L: 1, C: 0, R: 0 });
   });
 });

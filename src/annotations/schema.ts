@@ -1,4 +1,4 @@
-import type { Annotation, Transect } from "./model";
+import type { Annotation, Transect, HorizontalSpan } from "./model";
 
 export const SCHEMA_VERSION = 2;
 
@@ -40,6 +40,14 @@ type AnnotationFile = {
     transect: Transect;
     distance: number;
   }>;
+  flag_horizontal_spans: Array<{
+    u1: number;
+    v1: number;
+    u2: number;
+    v2: number;
+    transect: Transect;
+    distance: number;
+  }>;
 };
 
 export function buildAnnotationFile(
@@ -68,6 +76,17 @@ export function buildAnnotationFile(
       distance: a.distance,
     }));
 
+  const flag_horizontal_spans = annotations
+    .filter((a): a is HorizontalSpan => a.kind === "horizontal_span")
+    .map((a) => ({
+      u1: a.u1,
+      v1: a.v1,
+      u2: a.u2,
+      v2: a.v2,
+      transect: a.transect,
+      distance: a.distance,
+    }));
+
   return {
     schema_version: SCHEMA_VERSION,
     site: meta.site,
@@ -79,6 +98,7 @@ export function buildAnnotationFile(
     app_version: appVersion,
     wire_ground_points,
     flag_vertical_spans,
+    flag_horizontal_spans,
   };
 }
 
@@ -129,6 +149,32 @@ export function parseAnnotationFile(json: unknown): Annotation[] {
         continue;
       result.push({
         kind: "vertical_span",
+        u1: rec.u1,
+        v1: rec.v1,
+        u2: rec.u2,
+        v2: rec.v2,
+        transect: rec.transect,
+        distance: rec.distance,
+      });
+    }
+  }
+
+  const hspans = obj.flag_horizontal_spans;
+  if (Array.isArray(hspans)) {
+    for (const s of hspans) {
+      if (typeof s !== "object" || s === null) continue;
+      const rec = s as Record<string, unknown>;
+      if (
+        typeof rec.u1 !== "number" ||
+        typeof rec.v1 !== "number" ||
+        typeof rec.u2 !== "number" ||
+        typeof rec.v2 !== "number" ||
+        !isTransect(rec.transect) ||
+        typeof rec.distance !== "number"
+      )
+        continue;
+      result.push({
+        kind: "horizontal_span",
         u1: rec.u1,
         v1: rec.v1,
         u2: rec.u2,
