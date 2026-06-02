@@ -1,4 +1,4 @@
-import type { Annotation } from "./model";
+import type { Annotation, Transect } from "./model";
 
 export const SCHEMA_VERSION = 2;
 
@@ -17,12 +17,29 @@ export type FileMeta = {
   image_h: number;
 };
 
+type AnnotationFile = {
+  schema_version: number;
+  site: string;
+  image: string;
+  image_w: number;
+  image_h: number;
+  reference_dimensions_cm: typeof REFERENCE_DIMENSIONS_CM;
+  created_at: string;
+  app_version: string;
+  wire_ground_points: Array<{
+    u: number;
+    v: number;
+    transect: Transect;
+    distance: number;
+  }>;
+};
+
 export function buildAnnotationFile(
   meta: FileMeta,
   annotations: Annotation[],
   appVersion: string,
   createdAt: string
-): object {
+): AnnotationFile {
   const wire_ground_points = annotations
     .filter((a) => a.kind === "wire_ground")
     .map((a) => ({
@@ -50,11 +67,24 @@ export function parseAnnotationFile(json: unknown): Annotation[] {
   const points = (json as Record<string, unknown>).wire_ground_points;
   if (!Array.isArray(points)) return [];
 
-  return points.map((p) => ({
-    kind: "wire_ground" as const,
-    u: (p as any).u,
-    v: (p as any).v,
-    transect: (p as any).transect,
-    distance: (p as any).distance,
-  }));
+  const result: Annotation[] = [];
+  for (const p of points) {
+    if (typeof p !== "object" || p === null) continue;
+    const rec = p as Record<string, unknown>;
+    if (
+      typeof rec.u !== "number" ||
+      typeof rec.v !== "number" ||
+      (rec.transect !== "L" && rec.transect !== "C" && rec.transect !== "R") ||
+      typeof rec.distance !== "number"
+    )
+      continue;
+    result.push({
+      kind: "wire_ground",
+      u: rec.u,
+      v: rec.v,
+      transect: rec.transect,
+      distance: rec.distance,
+    });
+  }
+  return result;
 }
