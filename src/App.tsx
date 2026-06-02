@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import {
@@ -14,15 +14,34 @@ import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
 import {
   type Annotation,
+  type WireGroundPoint,
+  type VerticalSpan,
   type Transect,
   type Counts,
+  type SpanType,
   countsFromAnnotations,
+  canonicalizeSpan,
 } from "./annotations/model";
 import {
   buildAnnotationFile,
   parseAnnotationFile,
   type FileMeta,
 } from "./annotations/schema";
+import {
+  type ActiveType,
+  hitTest,
+} from "./annotations/hit-test";
+import {
+  pendingSpanReducer,
+  IDLE as PENDING_IDLE,
+} from "./annotations/pending-span";
+
+// Active annotation type ↔ annotation kind mapping. "wire_ground" is the
+// classic dot; "vertical_span" is the two-click flag vertical span.
+type ActiveAnnoType = ActiveType;
+const SPAN_TYPE_FOR: Partial<Record<ActiveAnnoType, SpanType>> = {
+  vertical_span: "vertical",
+};
 
 type LoadedImage = {
   path: string;
@@ -116,29 +135,6 @@ function clampPan(pan: number, drawSize: number, canvasSize: number): number {
 
 const HIT_TEST_RADIUS_CSS_PX = 12;
 
-function hitTestClick(
-  u: number,
-  v: number,
-  cs: Annotation[],
-  effScale: number
-): number | null {
-  // Radius converted into image space so the on-screen target stays roughly
-  // constant regardless of zoom level.
-  const radiusImg = HIT_TEST_RADIUS_CSS_PX / effScale;
-  let bestIdx: number | null = null;
-  let bestD2 = radiusImg * radiusImg;
-  for (let i = 0; i < cs.length; i++) {
-    const dx = cs[i].u - u;
-    const dy = cs[i].v - v;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < bestD2) {
-      bestD2 = d2;
-      bestIdx = i;
-    }
-  }
-  return bestIdx;
-}
-
 function fmtTimeOfDay(ts: number): string {
   const d = new Date(ts);
   const hh = String(d.getHours()).padStart(2, "0");
@@ -170,6 +166,7 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   {
     title: "Labels",
     rows: [
+      ["Annotation type wire–ground / vertical span", "Q / W"],
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
@@ -177,12 +174,20 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
     ],
   },
   {
+    title: "Vertical span (W)",
+    rows: [
+      ["Place endpoint 1, then endpoint 2", "click ×2"],
+      ["Endpoints span canvas + zoom panel", "either surface"],
+      ["Cancel a half-placed span", "Esc"],
+    ],
+  },
+  {
     title: "Editing",
     rows: [
-      ["Undo last click", "⌘Z"],
+      ["Undo last annotation", "⌘Z"],
       ["Clear all (current image)", "clear all link"],
-      ["Select a click (click on its dot)", "mouse"],
-      ["Remove selected click", "Del / ⌫"],
+      ["Select an annotation", "mouse"],
+      ["Remove selected annotation", "Del / ⌫"],
       ["Retag selected click L / C / R", "1 / 2 / 3"],
       ["Adjust selected click distance", "↑ / ↓"],
       ["Deselect", "Esc"],
@@ -278,6 +283,8 @@ function DistanceSparkline({ clicks }: { clicks: Annotation[] }) {
     R: 0,
   }));
   for (const c of clicks) {
+    // Sparkline summarizes wire-ground distances only; spans are excluded.
+    if (c.kind !== "wire_ground") continue;
     const i = Math.round(c.distance) - 1;
     if (i >= 0 && i < 15) bins[i][c.transect]++;
   }
@@ -356,11 +363,26 @@ function DistanceSparkline({ clicks }: { clicks: Annotation[] }) {
   );
 }
 
+function drawLabel(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  x: number,
+  y: number
+) {
+  ctx.font = "600 9px 'Geist Mono', ui-monospace, monospace";
+  ctx.textBaseline = "alphabetic";
+  const w = ctx.measureText(label).width;
+  ctx.fillStyle = "rgba(0,0,0,0.65)";
+  ctx.fillRect(x - 3, y - 9, w + 6, 12);
+  ctx.fillStyle = "#fafafa";
+  ctx.fillText(label, x, y);
+}
+
 function drawMarker(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  c: Annotation,
+  c: WireGroundPoint,
   scale: number
 ) {
   const color = TRANSECT_COLORS[c.transect];
@@ -373,16 +395,74 @@ function drawMarker(
   ctx.strokeStyle = "#000";
   ctx.stroke();
 
-  const label = `${c.transect}${fmtDistance(c.distance)}`;
-  ctx.font = "600 9px 'Geist Mono', ui-monospace, monospace";
-  ctx.textBaseline = "alphabetic";
-  const w = ctx.measureText(label).width;
-  const labelX = x + r + 3;
-  const labelY = y - r;
-  ctx.fillStyle = "rgba(0,0,0,0.65)";
-  ctx.fillRect(labelX - 3, labelY - 9, w + 6, 12);
-  ctx.fillStyle = "#fafafa";
-  ctx.fillText(label, labelX, labelY);
+  drawLabel(ctx, `${c.transect}${fmtDistance(c.distance)}`, x + r + 3, y - r);
+}
+
+const SPAN_TICK_HALF = 7;
+
+// Draw a completed span as a tick-ended line in its transect color, labeled
+// e.g. "L3·V". Coordinates x1/y1/x2/y2 are already in canvas (CSS) pixels.
+function drawSpan(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  s: VerticalSpan
+) {
+  const color = TRANSECT_COLORS[s.transect];
+  // Unit vector along the span and its perpendicular (for end ticks).
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len;
+  const py = dx / len;
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+
+  // End ticks (perpendicular caps).
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x1 - px * SPAN_TICK_HALF, y1 - py * SPAN_TICK_HALF);
+  ctx.lineTo(x1 + px * SPAN_TICK_HALF, y1 + py * SPAN_TICK_HALF);
+  ctx.moveTo(x2 - px * SPAN_TICK_HALF, y2 - py * SPAN_TICK_HALF);
+  ctx.lineTo(x2 + px * SPAN_TICK_HALF, y2 + py * SPAN_TICK_HALF);
+  ctx.stroke();
+
+  drawLabel(ctx, `${s.transect}${fmtDistance(s.distance)}·V`, x1 + 6, y1 - 4);
+}
+
+// Draw the live ghost line from a pending span's first endpoint to the cursor.
+function drawGhostLine(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  transect: Transect
+) {
+  ctx.save();
+  ctx.strokeStyle = TRANSECT_COLORS[transect];
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.7;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // small dot at the anchored first endpoint
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = TRANSECT_COLORS[transect];
+  ctx.beginPath();
+  ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function App() {
@@ -411,6 +491,11 @@ function App() {
   const [currentTransect, setCurrentTransect] = useState<Transect>("L");
   const [currentDistance, setCurrentDistance] = useState<number>(1);
   const [autoAdvance, setAutoAdvance] = useState<boolean>(true);
+
+  // Active annotation type chosen via Q (wire–ground) / W (vertical span).
+  const [activeType, setActiveType] = useState<ActiveAnnoType>("wire_ground");
+  // Global pending-span state (sequential two-click placement across surfaces).
+  const [pending, dispatchPending] = useReducer(pendingSpanReducer, PENDING_IDLE);
 
   const [clicksDir, setClicksDir] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
@@ -783,6 +868,13 @@ function App() {
     };
   }, []);
 
+  // Cancel a half-placed span when the user switches image, active type,
+  // transect, or distance. Deliberately NOT keyed on viewScale/pan/cursor so
+  // panning or zooming mid-placement leaves the pending span intact.
+  useEffect(() => {
+    dispatchPending({ type: "cancel" });
+  }, [activeType, currentTransect, currentDistance, image]);
+
   // F4: auto-save 5s after the last change (only when clicksDir is set)
   useEffect(() => {
     if (!dirty || !image || !clicksDir) return;
@@ -963,6 +1055,13 @@ function App() {
           setShowHelp(false);
           return;
         }
+        // An in-progress span placement is the most "active" thing — cancel it
+        // before falling through to deselect.
+        if (pending.kind !== "idle") {
+          e.preventDefault();
+          dispatchPending({ type: "cancel" });
+          return;
+        }
         if (selectedIdx !== null) {
           e.preventDefault();
           setSelectedIdx(null);
@@ -1026,6 +1125,12 @@ function App() {
       } else if (e.key.toLowerCase() === "a" && !cmd) {
         e.preventDefault();
         setAutoAdvance((a) => !a);
+      } else if (e.key.toLowerCase() === "q" && !cmd) {
+        e.preventDefault();
+        setActiveType("wire_ground");
+      } else if (e.key.toLowerCase() === "w" && !cmd) {
+        e.preventDefault();
+        setActiveType("vertical_span");
       } else if (e.key === "[") {
         e.preventDefault();
         setZoomRadius((r) => Math.max(ZOOM_MIN, r - 5));
@@ -1051,6 +1156,7 @@ function App() {
     folderImages.length,
     showHelp,
     selectedIdx,
+    pending,
     deleteSelected,
     retagSelected,
     adjustSelectedDistance,
@@ -1096,20 +1202,51 @@ function App() {
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
 
       for (const c of clicks) {
-        const x = offsetX + c.u * effScale;
-        const y = offsetY + c.v * effScale;
-        drawMarker(ctx, x, y, c, viewScale);
+        if (c.kind === "wire_ground") {
+          drawMarker(ctx, offsetX + c.u * effScale, offsetY + c.v * effScale, c, viewScale);
+        } else {
+          drawSpan(
+            ctx,
+            offsetX + c.u1 * effScale,
+            offsetY + c.v1 * effScale,
+            offsetX + c.u2 * effScale,
+            offsetY + c.v2 * effScale,
+            c
+          );
+        }
       }
 
-      if (selectedIdx !== null && clicks[selectedIdx]) {
-        const sc = clicks[selectedIdx];
-        const x = offsetX + sc.u * effScale;
-        const y = offsetY + sc.v * effScale;
-        ctx.beginPath();
-        ctx.arc(x, y, 10 + 2 * viewScale, 0, Math.PI * 2);
+      const sc = selectedIdx !== null ? clicks[selectedIdx] : undefined;
+      if (sc) {
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 2;
-        ctx.stroke();
+        if (sc.kind === "wire_ground") {
+          ctx.beginPath();
+          ctx.arc(offsetX + sc.u * effScale, offsetY + sc.v * effScale, 10 + 2 * viewScale, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          const ring = 8 + 2 * viewScale;
+          for (const [pu, pv] of [
+            [sc.u1, sc.v1],
+            [sc.u2, sc.v2],
+          ]) {
+            ctx.beginPath();
+            ctx.arc(offsetX + pu * effScale, offsetY + pv * effScale, ring, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Live ghost line from the pending span's first endpoint to the cursor.
+      if (pending.kind === "awaitingSecond" && cursor) {
+        drawGhostLine(
+          ctx,
+          offsetX + pending.first.u * effScale,
+          offsetY + pending.first.v * effScale,
+          offsetX + cursor.u * effScale,
+          offsetY + cursor.v * effScale,
+          pending.transect
+        );
       }
     }
 
@@ -1117,7 +1254,7 @@ function App() {
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY]);
+  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY, pending, cursor]);
 
   // Zoom panel
   useEffect(() => {
@@ -1178,24 +1315,56 @@ function App() {
       );
     }
 
+    const inWindow = (u: number, v: number) =>
+      u >= sx && u <= sx + sw && v >= sy && v <= sy + sh;
+    const toX = (u: number) => (u - sx) * zoomScale;
+    const toY = (v: number) => (v - sy) * zoomScale;
+
     for (const c of clicks) {
-      if (c.u < sx || c.u > sx + sw || c.v < sy || c.v > sy + sh) continue;
-      const x = (c.u - sx) * zoomScale;
-      const y = (c.v - sy) * zoomScale;
-      drawMarker(ctx, x, y, c, zoomScale);
+      if (c.kind === "wire_ground") {
+        if (!inWindow(c.u, c.v)) continue;
+        drawMarker(ctx, toX(c.u), toY(c.v), c, zoomScale);
+      } else {
+        // Draw the span if either endpoint falls within the panel window.
+        if (!inWindow(c.u1, c.v1) && !inWindow(c.u2, c.v2)) continue;
+        drawSpan(ctx, toX(c.u1), toY(c.v1), toX(c.u2), toY(c.v2), c);
+      }
     }
 
-    if (selectedIdx !== null && clicks[selectedIdx]) {
-      const sc = clicks[selectedIdx];
-      if (sc.u >= sx && sc.u <= sx + sw && sc.v >= sy && sc.v <= sy + sh) {
-        const x = (sc.u - sx) * zoomScale;
-        const y = (sc.v - sy) * zoomScale;
-        ctx.beginPath();
-        ctx.arc(x, y, 14, 0, Math.PI * 2);
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 2;
-        ctx.stroke();
+    const sc = selectedIdx !== null ? clicks[selectedIdx] : undefined;
+    if (sc) {
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      if (sc.kind === "wire_ground") {
+        if (inWindow(sc.u, sc.v)) {
+          ctx.beginPath();
+          ctx.arc(toX(sc.u), toY(sc.v), 14, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      } else {
+        for (const [pu, pv] of [
+          [sc.u1, sc.v1],
+          [sc.u2, sc.v2],
+        ]) {
+          if (!inWindow(pu, pv)) continue;
+          ctx.beginPath();
+          ctx.arc(toX(pu), toY(pv), 12, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
+    }
+
+    // Live ghost line in the zoom panel (anchored endpoint may be off-window;
+    // canvas clips it). Cursor maps to the panel center.
+    if (pending.kind === "awaitingSecond") {
+      drawGhostLine(
+        ctx,
+        toX(pending.first.u),
+        toY(pending.first.v),
+        toX(cursor.u),
+        toY(cursor.v),
+        pending.transect
+      );
     }
 
     ctx.strokeStyle = CROSSHAIR_COLOR;
@@ -1208,7 +1377,7 @@ function App() {
     ctx.lineTo(cssW / 2, cssH);
     ctx.stroke();
     ctx.globalAlpha = 1;
-  }, [image, clicks, cursor, zoomRadius, selectedIdx]);
+  }, [image, clicks, cursor, zoomRadius, selectedIdx, pending]);
 
   const mainCanvasEventToImageCoords = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>): Cursor | null => {
@@ -1263,6 +1432,46 @@ function App() {
     [currentTransect, currentDistance, autoAdvance]
   );
 
+  // Place an annotation of the active type at image coords (u,v). Wire-ground
+  // adds a dot immediately (with auto-advance); a span places sequentially:
+  // first click pins endpoint 1, second click completes + canonicalizes it.
+  const placeAt = useCallback(
+    (u: number, v: number) => {
+      if (activeType === "wire_ground") {
+        addClickAt(u, v);
+        return;
+      }
+      const spanType = SPAN_TYPE_FOR[activeType];
+      if (!spanType) return;
+      if (pending.kind === "awaitingSecond") {
+        const ep = canonicalizeSpan(spanType, pending.first, { u, v });
+        setClicks((prev) => [
+          ...prev,
+          {
+            kind: "vertical_span",
+            u1: ep.u1,
+            v1: ep.v1,
+            u2: ep.u2,
+            v2: ep.v2,
+            transect: pending.transect,
+            distance: pending.distance,
+          },
+        ]);
+        setDirty(true);
+        dispatchPending({ type: "secondClick", point: { u, v } });
+      } else {
+        dispatchPending({
+          type: "firstClick",
+          point: { u, v },
+          spanType,
+          transect: currentTransect,
+          distance: currentDistance,
+        });
+      }
+    },
+    [activeType, pending, currentTransect, currentDistance, addClickAt]
+  );
+
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const p = mainCanvasEventToImageCoords(e);
@@ -1278,22 +1487,27 @@ function App() {
         cw,
         ch
       );
-      const hit = hitTestClick(p.u, p.v, clicks, effScale);
+      const radiusImg = HIT_TEST_RADIUS_CSS_PX / effScale;
+      const hit = hitTest(clicks, p, activeType, radiusImg);
       if (hit !== null) {
         setSelectedIdx(hit);
         return;
       }
-      if (selectedIdx !== null) {
+      // A non-placement click (clearing a selection) only short-circuits when
+      // no span is mid-placement; otherwise the click is the span's endpoint.
+      if (selectedIdx !== null && pending.kind === "idle") {
         setSelectedIdx(null);
         return;
       }
-      addClickAt(p.u, p.v);
+      placeAt(p.u, p.v);
     },
     [
       mainCanvasEventToImageCoords,
-      addClickAt,
+      placeAt,
       clicks,
       selectedIdx,
+      activeType,
+      pending,
       image,
       viewScale,
       viewPanX,
@@ -1437,22 +1651,30 @@ function App() {
       // Ignore clicks in the off-image black band at edges (sx/sy unclamped).
       if (u < 0 || v < 0 || u >= image.width || v >= image.height) return;
       // Zoom-panel effective scale: ZOOM_PANEL_PX CSS-px maps to (2*r) image-px.
-      const hit = hitTestClick(u, v, clicks, ZOOM_PANEL_PX / (2 * r));
+      const effScale = ZOOM_PANEL_PX / (2 * r);
+      const radiusImg = HIT_TEST_RADIUS_CSS_PX / effScale;
+      const hit = hitTest(clicks, { u, v }, activeType, radiusImg);
       if (hit !== null) {
         setSelectedIdx(hit);
         return;
       }
-      if (selectedIdx !== null) {
+      if (selectedIdx !== null && pending.kind === "idle") {
         setSelectedIdx(null);
         return;
       }
-      addClickAt(u, v);
+      placeAt(u, v);
     },
-    [image, cursor, zoomRadius, addClickAt, clicks, selectedIdx]
+    [image, cursor, zoomRadius, placeAt, clicks, selectedIdx, activeType, pending]
   );
 
-  const counts: Record<Transect, number> = { L: 0, C: 0, R: 0 };
-  for (const c of clicks) counts[c.transect]++;
+  // Wire-ground L/C/R breakdown (countsFromAnnotations already filters to
+  // wire-ground, so spans never inflate these counts).
+  const counts = countsFromAnnotations(clicks);
+  const wireGroundCount = counts.L + counts.C + counts.R;
+  const verticalSpanCount = clicks.reduce(
+    (n, c) => (c.kind === "vertical_span" ? n + 1 : n),
+    0
+  );
 
   const filename = image ? pathBasename(image.path) : null;
   const saveStateText = dirty
@@ -1680,6 +1902,51 @@ function App() {
             <div className="rail-middle">
               <div className="rail-section">
                 <div className="rail-label">
+                  <span>Annotation</span>
+                  <span className="key-hint">Q · W</span>
+                </div>
+                <div className="segmented">
+                  <button
+                    className={`segmented-btn ${
+                      activeType === "wire_ground" ? "active" : ""
+                    }`}
+                    style={
+                      activeType === "wire_ground"
+                        ? {
+                            background: "var(--text-primary)",
+                            color: "var(--bg-app)",
+                            borderColor: "var(--text-primary)",
+                          }
+                        : undefined
+                    }
+                    onClick={() => setActiveType("wire_ground")}
+                    title="Wire–ground point (Q)"
+                  >
+                    Wire–ground
+                  </button>
+                  <button
+                    className={`segmented-btn ${
+                      activeType === "vertical_span" ? "active" : ""
+                    }`}
+                    style={
+                      activeType === "vertical_span"
+                        ? {
+                            background: "var(--text-primary)",
+                            color: "var(--bg-app)",
+                            borderColor: "var(--text-primary)",
+                          }
+                        : undefined
+                    }
+                    onClick={() => setActiveType("vertical_span")}
+                    title="Vertical span (W)"
+                  >
+                    Vert. span
+                  </button>
+                </div>
+              </div>
+
+              <div className="rail-section">
+                <div className="rail-label">
                   <span>Transect</span>
                   <span className="key-hint">1 · 2 · 3</span>
                 </div>
@@ -1744,6 +2011,13 @@ function App() {
             <div className="rail-bottom">
               <div className="rail-section counts">
                 <div className="counts-line">
+                  <span className="lbl">WG</span>
+                  <span className="mono total">{wireGroundCount}</span>
+                  <span className="sep">·</span>
+                  <span className="lbl">V</span>
+                  <span className="mono total">{verticalSpanCount}</span>
+                </div>
+                <div className="counts-line">
                   <span style={{ color: TRANSECT_COLORS.L }}>L</span>
                   <span className="mono">{counts.L}</span>
                   <span className="sep">·</span>
@@ -1753,8 +2027,8 @@ function App() {
                   <span style={{ color: TRANSECT_COLORS.R }}>R</span>
                   <span className="mono">{counts.R}</span>
                   <span className="eq-sep">=</span>
-                  <span className="mono total">{clicks.length}</span>
-                  <span className="lbl">clicks</span>
+                  <span className="mono total">{wireGroundCount}</span>
+                  <span className="lbl">wire–ground</span>
                 </div>
               </div>
 

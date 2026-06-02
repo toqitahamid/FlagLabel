@@ -32,6 +32,14 @@ type AnnotationFile = {
     transect: Transect;
     distance: number;
   }>;
+  flag_vertical_spans: Array<{
+    u1: number;
+    v1: number;
+    u2: number;
+    v2: number;
+    transect: Transect;
+    distance: number;
+  }>;
 };
 
 export function buildAnnotationFile(
@@ -41,10 +49,21 @@ export function buildAnnotationFile(
   createdAt: string
 ): AnnotationFile {
   const wire_ground_points = annotations
-    .filter((a) => a.kind === "wire_ground")
+    .filter((a): a is Extract<Annotation, { kind: "wire_ground" }> => a.kind === "wire_ground")
     .map((a) => ({
       u: a.u,
       v: a.v,
+      transect: a.transect,
+      distance: a.distance,
+    }));
+
+  const flag_vertical_spans = annotations
+    .filter((a): a is Extract<Annotation, { kind: "vertical_span" }> => a.kind === "vertical_span")
+    .map((a) => ({
+      u1: a.u1,
+      v1: a.v1,
+      u2: a.u2,
+      v2: a.v2,
       transect: a.transect,
       distance: a.distance,
     }));
@@ -59,32 +78,66 @@ export function buildAnnotationFile(
     created_at: createdAt,
     app_version: appVersion,
     wire_ground_points,
+    flag_vertical_spans,
   };
+}
+
+function isTransect(x: unknown): x is Transect {
+  return x === "L" || x === "C" || x === "R";
 }
 
 export function parseAnnotationFile(json: unknown): Annotation[] {
   if (typeof json !== "object" || json === null) return [];
-  const points = (json as Record<string, unknown>).wire_ground_points;
-  if (!Array.isArray(points)) return [];
-
+  const obj = json as Record<string, unknown>;
   const result: Annotation[] = [];
-  for (const p of points) {
-    if (typeof p !== "object" || p === null) continue;
-    const rec = p as Record<string, unknown>;
-    if (
-      typeof rec.u !== "number" ||
-      typeof rec.v !== "number" ||
-      (rec.transect !== "L" && rec.transect !== "C" && rec.transect !== "R") ||
-      typeof rec.distance !== "number"
-    )
-      continue;
-    result.push({
-      kind: "wire_ground",
-      u: rec.u,
-      v: rec.v,
-      transect: rec.transect,
-      distance: rec.distance,
-    });
+
+  const points = obj.wire_ground_points;
+  if (Array.isArray(points)) {
+    for (const p of points) {
+      if (typeof p !== "object" || p === null) continue;
+      const rec = p as Record<string, unknown>;
+      if (
+        typeof rec.u !== "number" ||
+        typeof rec.v !== "number" ||
+        !isTransect(rec.transect) ||
+        typeof rec.distance !== "number"
+      )
+        continue;
+      result.push({
+        kind: "wire_ground",
+        u: rec.u,
+        v: rec.v,
+        transect: rec.transect,
+        distance: rec.distance,
+      });
+    }
   }
+
+  const spans = obj.flag_vertical_spans;
+  if (Array.isArray(spans)) {
+    for (const s of spans) {
+      if (typeof s !== "object" || s === null) continue;
+      const rec = s as Record<string, unknown>;
+      if (
+        typeof rec.u1 !== "number" ||
+        typeof rec.v1 !== "number" ||
+        typeof rec.u2 !== "number" ||
+        typeof rec.v2 !== "number" ||
+        !isTransect(rec.transect) ||
+        typeof rec.distance !== "number"
+      )
+        continue;
+      result.push({
+        kind: "vertical_span",
+        u1: rec.u1,
+        v1: rec.v1,
+        u2: rec.u2,
+        v2: rec.v2,
+        transect: rec.transect,
+        distance: rec.distance,
+      });
+    }
+  }
+
   return result;
 }

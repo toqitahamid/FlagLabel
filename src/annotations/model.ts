@@ -8,8 +8,22 @@ export type WireGroundPoint = {
   distance: number;
 };
 
-// The union widens with span types in later slices.
-export type Annotation = WireGroundPoint;
+// Span types. The union widens with horizontal / flag-to-ground spans in
+// later slices; keep this a string-union so callers can switch exhaustively.
+export type SpanType = "vertical";
+
+export type VerticalSpan = {
+  kind: "vertical_span";
+  u1: number;
+  v1: number;
+  u2: number;
+  v2: number;
+  transect: Transect;
+  distance: number;
+};
+
+// The union widens further with horizontal / flag-to-ground spans later.
+export type Annotation = WireGroundPoint | VerticalSpan;
 
 export type Counts = { L: number; C: number; R: number };
 
@@ -19,4 +33,30 @@ export function countsFromAnnotations(anns: Annotation[]): Counts {
     if (a.kind === "wire_ground") out[a.transect]++;
   }
   return out;
+}
+
+export type Point = { u: number; v: number };
+
+export type SpanEndpoints = { u1: number; v1: number; u2: number; v2: number };
+
+// Canonical endpoint ordering for spans. For a vertical span we store the
+// upper point (smaller `v`) as (u1,v1). Ties on `v` break deterministically
+// on `u` (smaller first) so the result is order-independent. This same
+// helper will canonicalize horizontal / flag-to-ground spans in later
+// slices (their ordering rule keyed off `type`).
+export function canonicalizeSpan(
+  type: SpanType,
+  p1: Point,
+  p2: Point
+): SpanEndpoints {
+  // Exhaustive over SpanType today; switch makes future types explicit.
+  switch (type) {
+    case "vertical": {
+      const swap =
+        p2.v < p1.v || (p2.v === p1.v && p2.u < p1.u);
+      const a = swap ? p2 : p1;
+      const b = swap ? p1 : p2;
+      return { u1: a.u, v1: a.v, u2: b.u, v2: b.v };
+    }
+  }
 }
