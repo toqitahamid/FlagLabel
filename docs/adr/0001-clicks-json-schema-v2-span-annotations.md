@@ -1,5 +1,11 @@
 # Clicks-JSON schema v2: separate per-type arrays for span annotations
 
+> **Update (Slice 1, #2):** The dual-read back-compat below was **reversed** by
+> the project owner. `parseAnnotationFile` reads **v2 only**; legacy v1
+> `clicks`-only files parse to `[]` and therefore load as empty. There is no
+> in-app migration. The rest of this ADR (array layout, dropped `click_type`,
+> `reference_dimensions_cm`, the `clicks`→`wire_ground_points` rename) stands.
+
 ## Context
 
 v1 of the per-image JSON held a single `clicks` array and a file-level
