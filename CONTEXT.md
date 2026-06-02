@@ -41,7 +41,7 @@ A two-point measurement from the top edge of the flag body down to the wire–gr
 _Avoid_: full-height span, stake-height span, tall span (use "flag-to-ground span")
 
 **Span**:
-Umbrella term for a vertical or horizontal span — a single, indivisible two-point calibration measurement. The two endpoints are placed sequentially (first click pins one end, a ghost line follows the cursor, second click completes it) and are always selected and deleted as a unit.
+Umbrella term for a vertical, horizontal, or flag-to-ground span — a single, indivisible two-point calibration measurement. The two endpoints are placed sequentially (first click pins one end, a ghost line follows the cursor, second click completes it) and are always selected and deleted as a unit.
 
 ### Coordinates & grouping
 

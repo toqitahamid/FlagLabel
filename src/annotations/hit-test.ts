@@ -1,7 +1,7 @@
 import type { Annotation, Point } from "./model";
 
 // Active annotation type == an annotation `kind`. Derived from the union so it
-// auto-widens with new span kinds in later slices.
+// auto-widens if new annotation kinds are added.
 export type ActiveType = Annotation["kind"];
 
 // Squared distance from a click to an annotation, using only annotations whose
@@ -19,7 +19,7 @@ function distanceSqToActive(
     const dy = a.v - point.v;
     return dx * dx + dy * dy;
   }
-  // span (vertical_span / horizontal_span): nearer endpoint wins
+  // span (vertical_span / horizontal_span / flag_to_ground_span): nearer endpoint wins
   const dx1 = a.u1 - point.u;
   const dy1 = a.v1 - point.v;
   const dx2 = a.u2 - point.u;

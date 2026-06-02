@@ -8,8 +8,8 @@ export type WireGroundPoint = {
   distance: number;
 };
 
-// Span types. The union widens with horizontal / flag-to-ground spans in
-// later slices; keep this a string-union so callers can switch exhaustively.
+// Span types. Kept a string-union so callers can switch exhaustively; adding a
+// new span type forces a compile error at every `Record<SpanType, …>` site.
 export type SpanType = "vertical" | "horizontal" | "flag_to_ground";
 
 export type VerticalSpan = {
@@ -61,11 +61,10 @@ export type Point = { u: number; v: number };
 
 export type SpanEndpoints = { u1: number; v1: number; u2: number; v2: number };
 
-// Canonical endpoint ordering for spans. For a vertical span we store the
-// upper point (smaller `v`) as (u1,v1). Ties on `v` break deterministically
-// on `u` (smaller first) so the result is order-independent. This same
-// helper will canonicalize horizontal / flag-to-ground spans in later
-// slices (their ordering rule keyed off `type`).
+// Canonical endpoint ordering for spans, keyed off `type`. Vertical and
+// flag-to-ground store the upper point (smaller `v`) as (u1,v1); horizontal
+// stores the left point (smaller `u`) first. Ties break deterministically on
+// the other axis so the result is order-independent.
 export function canonicalizeSpan(
   type: SpanType,
   p1: Point,

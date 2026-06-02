@@ -40,8 +40,7 @@ the domain term (*wire–ground intersection*).
 
 ## Consequences
 
-- Naive v1 readers keyed on `clicks` or `click_type` break. The FlagLabel app
-  loader must **dual-read**: prefer `wire_ground_points`, fall back to `clicks`
-  for v1 files already on disk — otherwise every previously-labeled image reads
-  as empty.
+- Naive v1 readers keyed on `clicks` or `click_type` break. Per the reversal
+  note above, the FlagLabel app loader reads **v2 only** — it does NOT dual-read,
+  so any pre-existing v1 (`clicks`-only) file loads as empty.
 - The downstream distance-estimation pipeline must branch on `schema_version`.
