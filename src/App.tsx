@@ -46,6 +46,7 @@ import {
 import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
 import { UploadScreen } from "./cloud/UploadScreen";
+import { useImageLock } from "./cloud/useImageLock";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
@@ -891,6 +892,21 @@ function App() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [showUpload, setShowUpload] = useState<boolean>(false);
 
+  // Web-only (cloud) soft edit lock (#17). Keyed on the active image's row
+  // (site, image_name); the storage path (== image.path on web) drives the
+  // Realtime subscription. The hook is an inert pass-through on desktop —
+  // `canEdit` is constant true and no Supabase call ever runs (`isTauri()`
+  // short-circuits every effect), so desktop annotation behavior is unchanged.
+  // `image.path` on web is the storage_path the gallery rows are keyed on, and
+  // siteFromPath/pathBasename mirror exactly how the backend derives the row
+  // keys, so the (site, image_name) UPDATE keys round-trip correctly.
+  const { status: lockStatusValue, heldBy: lockHeldBy, canEdit, forceUnlock } =
+    useImageLock({
+      imageId: image ? image.path : null,
+      site: image ? siteFromPath(image.path) : null,
+      imageName: image ? pathBasename(image.path) : null,
+    });
+
   const [appVersion, setAppVersion] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
@@ -1194,6 +1210,12 @@ function App() {
     // mirror the desktop bookkeeping (lastSavedAt / dirty / imageCounts). The
     // desktop block below is left byte-identical.
     if (!isTauri()) {
+      // Soft-lock guard (#17): never write the blob while another labeler holds
+      // a live lock. `canEdit` already blocks the mutations that set `dirty`, so
+      // this only matters in the narrow window where the lock was lost (admin
+      // force-unlock + reclaim) between an edit and the auto-save firing — last-
+      // write-wins makes that write a clobber, so we drop it.
+      if (!canEdit) return;
       const meta: FileMeta = {
         site: siteFromPath(image.path),
         image: pathBasename(image.path),
@@ -1265,7 +1287,7 @@ function App() {
     } catch (e) {
       console.error("Save failed", e);
     }
-  }, [image, clicks, clicksDir, appVersion, dirty]);
+  }, [image, clicks, clicksDir, appVersion, dirty, canEdit]);
 
   const navigateBy = useCallback(
     async (delta: number) => {
@@ -1427,15 +1449,17 @@ function App() {
   }, [dirty, clicks, image, clicksDir, handleSave]);
 
   const handleUndo = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
     setClicks((prev) => {
       if (prev.length === 0) return prev;
       return prev.slice(0, -1);
     });
     setSelectedIdx(null);
     setDirty(true);
-  }, []);
+  }, [canEdit]);
 
   const handleClear = useCallback(async () => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (clicks.length === 0) return;
     const message = `Clear all ${clicks.length} click${
       clicks.length === 1 ? "" : "s"
@@ -1448,28 +1472,31 @@ function App() {
       setSelectedIdx(null);
       setDirty(true);
     }
-  }, [clicks.length]);
+  }, [clicks.length, canEdit]);
 
   const deleteSelected = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (selectedIdx === null) return;
     setClicks((prev) => prev.filter((_, i) => i !== selectedIdx));
     setSelectedIdx(null);
     setDirty(true);
-  }, [selectedIdx]);
+  }, [selectedIdx, canEdit]);
 
   const retagSelected = useCallback(
     (t: Transect) => {
+      if (!canEdit) return; // web: blocked while another labeler holds the lock
       if (selectedIdx === null) return;
       setClicks((prev) =>
         prev.map((c, i) => (i === selectedIdx ? { ...c, transect: t } : c))
       );
       setDirty(true);
     },
-    [selectedIdx]
+    [selectedIdx, canEdit]
   );
 
   const adjustSelectedDistance = useCallback(
     (delta: number) => {
+      if (!canEdit) return; // web: blocked while another labeler holds the lock
       if (selectedIdx === null) return;
       setClicks((prev) =>
         prev.map((c, i) => {
@@ -1483,7 +1510,7 @@ function App() {
       );
       setDirty(true);
     },
-    [selectedIdx]
+    [selectedIdx, canEdit]
   );
 
   const resetView = useCallback(() => {
@@ -2067,6 +2094,7 @@ function App() {
   // first click pins endpoint 1, second click completes + canonicalizes it.
   const placeAt = useCallback(
     (u: number, v: number) => {
+      if (!canEdit) return; // web: blocked while another labeler holds the lock
       if (activeType === "wire_ground") {
         addClickAt(u, v);
         return;
@@ -2100,12 +2128,13 @@ function App() {
         });
       }
     },
-    [activeType, pending, currentTransect, currentDistance, addClickAt, commitAnnotation]
+    [activeType, pending, currentTransect, currentDistance, addClickAt, commitAnnotation, canEdit]
   );
 
   // Collision-confirm resolvers. The modal is guarded so `clicks` cannot be
   // reordered while open, keeping `existingIndex` valid.
   const resolveCollisionReplace = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (!pendingCollision) return;
     const { candidate, existingIndex } = pendingCollision;
     setClicks((prev) => [
@@ -2115,16 +2144,17 @@ function App() {
     setDirty(true);
     applyAutoAdvance(candidate);
     setPendingCollision(null);
-  }, [pendingCollision, applyAutoAdvance]);
+  }, [pendingCollision, applyAutoAdvance, canEdit]);
 
   const resolveCollisionKeepBoth = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (!pendingCollision) return;
     const { candidate } = pendingCollision;
     setClicks((prev) => [...prev, candidate]);
     setDirty(true);
     applyAutoAdvance(candidate);
     setPendingCollision(null);
-  }, [pendingCollision, applyAutoAdvance]);
+  }, [pendingCollision, applyAutoAdvance, canEdit]);
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -2379,6 +2409,34 @@ function App() {
                 </span>
               </>
             )}
+            {/* Web-only (#17) soft edit-lock badge. Held-by-other blocks editing
+                (read-only); 'mine' is a subtle reassurance you hold it. */}
+            {!isTauri() && lockStatusValue === "held-by-other" && (
+              <>
+                <span className="sep">·</span>
+                <span className="lock-badge lock-badge-other" title="This image is being edited by another labeler. You can view it, but editing is blocked.">
+                  🔒 in use by {lockHeldBy ?? "another labeler"}
+                </span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="lock-force-unlock"
+                    onClick={forceUnlock}
+                    title="Admin: clear this lock so it can be claimed"
+                  >
+                    Force unlock
+                  </button>
+                )}
+              </>
+            )}
+            {!isTauri() && lockStatusValue === "mine" && (
+              <>
+                <span className="sep">·</span>
+                <span className="lock-badge lock-badge-mine" title="You hold the edit lock for this image.">
+                  editing
+                </span>
+              </>
+            )}
           </span>
         )}
         {image && (
@@ -2386,7 +2444,7 @@ function App() {
             <button
               className="title-btn"
               onClick={handleUndo}
-              disabled={clicks.length === 0}
+              disabled={clicks.length === 0 || !canEdit}
               title="Undo last click (⌘Z)"
             >
               Undo
@@ -2394,7 +2452,7 @@ function App() {
             <button
               className="title-btn primary"
               onClick={handleSave}
-              disabled={!dirty}
+              disabled={!dirty || !canEdit}
               title="Save (⌘S)"
             >
               Save
@@ -2822,7 +2880,7 @@ function App() {
               </div>
 
               {clicks.length > 0 && (
-                <button className="clear-link" onClick={handleClear}>
+                <button className="clear-link" onClick={handleClear} disabled={!canEdit}>
                   clear all
                 </button>
               )}

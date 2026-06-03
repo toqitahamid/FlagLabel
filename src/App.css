@@ -399,6 +399,40 @@ body,
   color: var(--text-tertiary);
 }
 
+/* ---------- Web-only soft edit lock (#17) ---------- */
+
+.lock-badge {
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.lock-badge-other {
+  color: var(--danger-soft);
+  font-weight: 500;
+}
+
+.lock-badge-mine {
+  color: var(--accent);
+  font-variant: small-caps;
+}
+
+.lock-force-unlock {
+  font: inherit;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--danger);
+  background: transparent;
+  color: var(--danger-soft);
+  cursor: pointer;
+  transition: background-color 80ms ease, color 80ms ease;
+}
+
+.lock-force-unlock:hover {
+  background: var(--danger);
+  color: var(--bg-app);
+}
+
 .rail-label {
   display: flex;
   align-items: baseline;
