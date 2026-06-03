@@ -1511,8 +1511,15 @@ function App() {
         if (!inWindow(c.u, c.v)) continue;
         drawMarker(ctx, toX(c.u), toY(c.v), c, zoomScale);
       } else {
-        // Draw the span if either endpoint falls within the panel window.
-        if (!inWindow(c.u1, c.v1) && !inWindow(c.u2, c.v2)) continue;
+        // Draw the span if its bounding box intersects the panel window — not
+        // just if an endpoint is inside it. A long span (e.g. flag-to-ground)
+        // can pass straight through the window with BOTH endpoints outside;
+        // the canvas clips the off-panel portion of the line.
+        const minU = Math.min(c.u1, c.u2);
+        const maxU = Math.max(c.u1, c.u2);
+        const minV = Math.min(c.v1, c.v2);
+        const maxV = Math.max(c.v1, c.v2);
+        if (maxU < sx || minU > sx + sw || maxV < sy || minV > sy + sh) continue;
         drawSpan(ctx, toX(c.u1), toY(c.v1), toX(c.u2), toY(c.v2), c);
       }
     }
