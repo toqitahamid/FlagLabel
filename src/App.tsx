@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Menu,
@@ -36,9 +36,10 @@ import {
 } from "./annotations/pending-span";
 import { findCollision } from "./annotations/collision";
 import { TauriStorageBackend } from "./cloud/tauri-backend";
-import { SupabaseStorageBackend } from "./cloud/supabase-backend";
+import { SupabaseStorageBackend, fetchIsAdmin } from "./cloud/supabase-backend";
 import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
+import { UploadScreen } from "./cloud/UploadScreen";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
@@ -871,6 +872,12 @@ function App() {
   const [folderImages, setFolderImages] = useState<string[]>([]);
   const [imageCounts, setImageCounts] = useState<Record<string, Counts>>({});
 
+  // Web-only (cloud) state. `isAdmin` gates the upload affordance (RLS is the
+  // real server-side gate); `showUpload` toggles the upload screen. Both are
+  // inert on desktop (the effect that sets isAdmin early-returns on Tauri).
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [showUpload, setShowUpload] = useState<boolean>(false);
+
   const [appVersion, setAppVersion] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
@@ -901,6 +908,11 @@ function App() {
   const backendRef = useRef<TauriStorageBackend | SupabaseStorageBackend>(
     isTauri() ? new TauriStorageBackend() : new SupabaseStorageBackend(),
   );
+  // Monotonic load token. `loadImage` resolves image URLs asynchronously on the
+  // web (signed URLs), so a fast gallery click can start a second load before
+  // the first's onload fires. Each call captures the current token; an onload
+  // whose token is stale bails, so only the latest selection wins.
+  const loadSeqRef = useRef(0);
 
   // Load persisted settings on mount
   useEffect(() => {
@@ -943,55 +955,96 @@ function App() {
     })();
   }, []);
 
+  // Web-only: load the shared-dataset gallery from the `annotations` rows.
+  // Storage keys flow through `folderImages` exactly like local paths do on
+  // desktop, so the existing sidebar + navigateToIndex + loadImage machinery
+  // composes unchanged. No-op on desktop (folders come from the native dialog).
+  const refreshGallery = useCallback(async () => {
+    if (isTauri()) return;
+    try {
+      const items = await backendRef.current.listImages();
+      setFolderImages(items.map((it) => it.id));
+    } catch (e) {
+      console.error("Gallery load failed", e);
+    }
+  }, []);
+
+  // Web-only: on mount (App only renders post-auth on the web), determine admin
+  // status for the upload affordance and load the gallery. Desktop early-returns.
+  useEffect(() => {
+    if (isTauri()) return;
+    fetchIsAdmin().then(setIsAdmin).catch(() => {});
+    refreshGallery();
+  }, [refreshGallery]);
+
   const loadImage = useCallback((path: string): Promise<void> => {
     setError(null);
-    // Desktop-only path: `loadImage` is reached only when images are loaded from
-    // a local folder (the web backend's `listImages` returns [] this slice — the
-    // cloud gallery is #14), so the backend here is always the Tauri backend and
-    // `resolveImageUrl` is synchronous. Narrow to the sync backend to keep the
-    // existing synchronous image-load flow; the cloud signed-URL (async) path is
-    // wired up with the #14 gallery.
+    // URL acquisition is the ONLY platform difference here: the Tauri backend's
+    // `resolveImageUrl` is synchronous (`convertFileSrc`), while the web backend
+    // returns a Promise<signedUrl>. Resolving the URL via `Promise.resolve(...)`
+    // keeps the desktop path effectively synchronous (it resolves in the same
+    // microtask, no signed-URL round trip) while letting the web path await.
+    // Everything after the URL is identical for both platforms.
     const backend = backendRef.current;
-    if (!(backend instanceof TauriStorageBackend)) {
-      // No-op in web until #14 supplies cloud images.
-      return Promise.resolve();
-    }
-    const url = backend.resolveImageUrl(itemFromPath(path));
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        imgRef.current = img;
-        setClicks([]);
-        setSelectedIdx(null);
-        // Dismiss any open collision modal on EVERY image switch (native ⌘O/⌘⇧O,
-        // folder open, in-app navigation all funnel through here). The candidate
-        // + existingIndex are tied to the outgoing image's clicks array; leaving
-        // the modal open would let Replace/Keep-both write the old image's
-        // annotation into the new image. Discarding the candidate is the safe
-        // resolution.
-        setPendingCollision(null);
-        setCursor(null);
-        setCurrentDistance(1);
-        setDirty(false);
-        setLastSavedAt(null);
-        setViewScale(1);
-        setViewPanX(0);
-        setViewPanY(0);
-        setImage({
-          path,
-          url,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-        });
-        resolve();
-      };
-      img.onerror = () => {
+    const seq = ++loadSeqRef.current;
+    const item = itemFromPath(path);
+    return Promise.resolve(backend.resolveImageUrl(item)).then(
+      (url) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            // Stale-load guard: a newer loadImage started while this URL was
+            // being fetched/decoded — drop this result so the latest wins.
+            if (seq !== loadSeqRef.current) {
+              resolve();
+              return;
+            }
+            imgRef.current = img;
+            setClicks([]);
+            setSelectedIdx(null);
+            // Dismiss any open collision modal on EVERY image switch (native ⌘O/⌘⇧O,
+            // folder open, in-app navigation all funnel through here). The candidate
+            // + existingIndex are tied to the outgoing image's clicks array; leaving
+            // the modal open would let Replace/Keep-both write the old image's
+            // annotation into the new image. Discarding the candidate is the safe
+            // resolution.
+            setPendingCollision(null);
+            setCursor(null);
+            setCurrentDistance(1);
+            setDirty(false);
+            setLastSavedAt(null);
+            setViewScale(1);
+            setViewPanX(0);
+            setViewPanY(0);
+            setImage({
+              path,
+              url,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+            });
+            resolve();
+          };
+          img.onerror = () => {
+            if (seq !== loadSeqRef.current) {
+              resolve();
+              return;
+            }
+            imgRef.current = null;
+            setImage(null);
+            setError(path);
+            resolve();
+          };
+          img.src = url;
+        }),
+    ).catch((e) => {
+      // A failed signed-URL fetch (web) surfaces as a load error, mirroring an
+      // <img> onerror — but only if this is still the latest load.
+      if (seq === loadSeqRef.current) {
         imgRef.current = null;
         setImage(null);
         setError(path);
-        resolve();
-      };
-      img.src = url;
+      }
+      console.error("loadImage failed", e);
     });
   }, []);
 
@@ -1081,7 +1134,11 @@ function App() {
 
   // Auto-load matching JSON when image + clicksDir are known
   useEffect(() => {
-    if (!image || !clicksDir) return;
+    if (!image) return;
+    // Desktop needs a chosen clicks dir to know where JSONs live; the web
+    // backend keys annotations on (site, image_name) and ignores clicksDir, so
+    // the gate is desktop-only — on web we load as soon as an image is selected.
+    if (isTauri() && !clicksDir) return;
     let cancelled = false;
     backendRef.current.setClicksDir(clicksDir);
     (async () => {
@@ -2284,7 +2341,11 @@ function App() {
           <aside className="folder-sidebar">
             <div className="folder-header">
               <div className="folder-path" title={folderDir ?? ""}>
-                {folderDir ? pathBasename(folderDir) : ""}
+                {isTauri()
+                  ? folderDir
+                    ? pathBasename(folderDir)
+                    : ""
+                  : "Shared dataset"}
               </div>
               <div className="folder-meta">
                 <span className="mono">
@@ -2302,9 +2363,25 @@ function App() {
                 <span className="mono">{folderImages.length}</span>
                 <span> total</span>
               </div>
+              {!isTauri() && isAdmin && (
+                <button
+                  type="button"
+                  className="btn upload-trigger"
+                  onClick={() => setShowUpload(true)}
+                >
+                  Upload images
+                </button>
+              )}
             </div>
             <ul className="image-list">
               {folderImages.map((path, idx) => {
+                // Web gallery groups by site: emit a subheader whenever the site
+                // changes from the previous row (folderImages is sorted by site,
+                // then name, by listImages). Desktop keeps its flat single-folder
+                // list (one site), so the subheader never appears there.
+                const site = siteFromPath(path);
+                const showSiteHeader =
+                  !isTauri() && (idx === 0 || siteFromPath(folderImages[idx - 1]) !== site);
                 const isActive = image?.path === path;
                 const liveCounts = isActive ? countsByTransect(clicks) : null;
                 const persisted = imageCounts[path];
@@ -2314,31 +2391,37 @@ function App() {
                   : 0;
                 const untouched = total === 0;
                 return (
-                  <li
-                    key={path}
-                    className={`image-item ${isActive ? "active" : ""} ${
-                      untouched ? "untouched" : ""
-                    }`}
-                    onClick={() => navigateToIndex(idx)}
-                    title={path}
-                  >
-                    <span className="image-item-name">{pathBasename(path)}</span>
-                    {rowCounts && total > 0 && (
-                      <span className="image-item-counts">
-                        <span style={{ color: TRANSECT_COLORS.L }}>
-                          {rowCounts.L}
-                        </span>
-                        <span className="dot">·</span>
-                        <span style={{ color: TRANSECT_COLORS.C }}>
-                          {rowCounts.C}
-                        </span>
-                        <span className="dot">·</span>
-                        <span style={{ color: TRANSECT_COLORS.R }}>
-                          {rowCounts.R}
-                        </span>
-                      </span>
+                  <Fragment key={path}>
+                    {showSiteHeader && (
+                      <li className="image-site-header" aria-hidden>
+                        {site}
+                      </li>
                     )}
-                  </li>
+                    <li
+                      className={`image-item ${isActive ? "active" : ""} ${
+                        untouched ? "untouched" : ""
+                      }`}
+                      onClick={() => navigateToIndex(idx)}
+                      title={path}
+                    >
+                      <span className="image-item-name">{pathBasename(path)}</span>
+                      {rowCounts && total > 0 && (
+                        <span className="image-item-counts">
+                          <span style={{ color: TRANSECT_COLORS.L }}>
+                            {rowCounts.L}
+                          </span>
+                          <span className="dot">·</span>
+                          <span style={{ color: TRANSECT_COLORS.C }}>
+                            {rowCounts.C}
+                          </span>
+                          <span className="dot">·</span>
+                          <span style={{ color: TRANSECT_COLORS.R }}>
+                            {rowCounts.R}
+                          </span>
+                        </span>
+                      )}
+                    </li>
+                  </Fragment>
                 );
               })}
             </ul>
@@ -2437,10 +2520,30 @@ function App() {
                     </span>
                   </>
                 ) : (
-                  <span className="hint">
-                    The shared dataset loads from the cloud — the image gallery
-                    is coming soon.
-                  </span>
+                  <>
+                    {folderImages.length === 0 && (
+                      <span className="hint">
+                        {isAdmin
+                          ? "No images in the shared dataset yet — upload a camera folder to begin."
+                          : "No images in the shared dataset yet. Ask the project admin to upload a camera folder."}
+                      </span>
+                    )}
+                    {folderImages.length > 0 && (
+                      <span className="hint">
+                        Pick an image from the gallery on the left to begin.
+                      </span>
+                    )}
+                    {isAdmin && (
+                      <div className="state-buttons">
+                        <button
+                          className="btn primary"
+                          onClick={() => setShowUpload(true)}
+                        >
+                          Upload images
+                        </button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -2685,6 +2788,16 @@ function App() {
           <span>no image</span>
         )}
       </footer>
+
+      {/* Web-only admin ingest. Guarded by `isAdmin` (RLS is the real gate). The
+          backend instance is the SupabaseStorageBackend on the web build. */}
+      {showUpload && !isTauri() && backendRef.current instanceof SupabaseStorageBackend && (
+        <UploadScreen
+          backend={backendRef.current}
+          onDone={refreshGallery}
+          onClose={() => setShowUpload(false)}
+        />
+      )}
     </main>
   );
 }

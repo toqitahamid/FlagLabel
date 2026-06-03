@@ -1,6 +1,7 @@
 import type { AnnotationFile } from "../annotations/schema";
 import { getSupabaseClient } from "./supabase-client";
 import type { ImageItem, StorageBackend } from "./storage-backend";
+import { uploadTargetFromRelativePath } from "./upload-identity";
 
 // Web (cloud) backend: persists to the Supabase `annotations` table and resolves
 // image URLs from the `photos` Storage bucket. The whole `src/annotations/` core
@@ -27,6 +28,24 @@ type AnnotationRow = {
   data: AnnotationFile;
 };
 
+// Result of uploading one camera folder: how many files succeeded vs. were
+// skipped (non-image) or errored, so the upload screen can show a final count.
+export type UploadResult = {
+  uploaded: number;
+  skipped: number;
+  failed: { name: string; error: string }[];
+};
+
+// Whether the signed-in user is an admin, per the server-side `is_admin()`
+// helper. RLS is the real gate (insert/upload are admin-only server-side); this
+// only decides whether the UI offers the admin-only upload affordance.
+export async function fetchIsAdmin(): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc("is_admin");
+  if (error) return false;
+  return data === true;
+}
+
 export class SupabaseStorageBackend implements StorageBackend {
   // Parity no-ops with TauriStorageBackend so App.tsx's existing
   // `backendRef.current.setFolder(...)` / `setClicksDir(...)` call sites
@@ -35,10 +54,75 @@ export class SupabaseStorageBackend implements StorageBackend {
   setFolder(_folder: string | null): void {}
   setClicksDir(_clicksDir: string | null): void {}
 
-  // Deferred to #14 (the shared-dataset gallery). Empty list keeps the web shell
-  // a clean placeholder for now without breaking the sync image path in App.tsx.
+  // The shared-dataset gallery (#14): the `annotations` table holds one row per
+  // known image (seeded by the admin uploader). Reading rows is allowed for all
+  // authenticated users by RLS. The item `id` IS the in-bucket storage key (no
+  // `photos/` prefix) so `resolveImageUrl`'s `.from("photos").createSignedUrl(id)`
+  // resolves correctly. Sorted by site then name for a stable, grouped gallery.
   async listImages(): Promise<ImageItem[]> {
-    return [];
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("site, image_name, storage_path")
+      .order("site", { ascending: true })
+      .order("image_name", { ascending: true });
+    if (error) {
+      throw new Error(
+        `SupabaseStorageBackend.listImages failed: ${error.message}`,
+      );
+    }
+    return (data ?? []).map((row) => ({
+      id: row.storage_path,
+      site: row.site,
+      name: row.image_name,
+    }));
+  }
+
+  // Admin-only ingest (#14): upload one camera folder's image files to Storage
+  // under `<site>/<name>` and seed/refresh a row per file. `site` is derived from
+  // each file's `webkitRelativePath` (the immediate parent folder = the camera).
+  // RLS enforces admin-only on both the Storage upload and the row INSERT; a
+  // non-admin's calls fail server-side. The row upsert sends ONLY identity
+  // columns (site, image_name, storage_path) so re-uploading an image never
+  // clobbers its existing `data` jsonb. `onProgress` reports files completed.
+  async uploadFolder(
+    files: { file: File; relativePath: string }[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<UploadResult> {
+    const supabase = getSupabaseClient();
+    const result: UploadResult = { uploaded: 0, skipped: 0, failed: [] };
+    let done = 0;
+    for (const { file, relativePath } of files) {
+      const target = uploadTargetFromRelativePath(relativePath);
+      if (!target) {
+        result.skipped += 1;
+        onProgress?.(++done, files.length);
+        continue;
+      }
+      try {
+        const up = await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(target.storagePath, file, { upsert: true });
+        if (up.error) throw up.error;
+        const { error: rowError } = await supabase.from("annotations").upsert(
+          {
+            site: target.site,
+            image_name: target.name,
+            storage_path: target.storagePath,
+          },
+          { onConflict: "site,image_name" },
+        );
+        if (rowError) throw rowError;
+        result.uploaded += 1;
+      } catch (e) {
+        result.failed.push({
+          name: target.storagePath,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      onProgress?.(++done, files.length);
+    }
+    return result;
   }
 
   // A signed URL the <img>/canvas can load. Async by interface contract (cloud

@@ -1595,3 +1595,69 @@ canvas {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Web-only: gallery site grouping subheader in the folder sidebar. */
+.image-site-header {
+  padding: 10px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  list-style: none;
+}
+
+/* Web-only: admin upload trigger + the upload modal. */
+.upload-trigger {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.upload-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.upload-card {
+  width: min(480px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  background: var(--surface, #1c1c1f);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-md, 8px);
+}
+
+.upload-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.upload-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.upload-progress,
+.upload-result {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.upload-failed {
+  color: var(--danger-soft);
+}
+
+.upload-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
