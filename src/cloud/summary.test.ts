@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { deriveSummary } from "./summary";
+import {
+  deriveSummary,
+  isAnnotated,
+  summarizeProgress,
+  type ImageProgress,
+} from "./summary";
 import { buildAnnotationFile, type FileMeta } from "../annotations/schema";
 import type { Annotation } from "../annotations/model";
 
@@ -47,5 +52,65 @@ describe("deriveSummary", () => {
   it("labeler string is recorded verbatim including empty string", () => {
     const result = deriveSummary(null, "");
     expect(result.labeler).toBe("");
+  });
+});
+
+describe("isAnnotated", () => {
+  it("annotation_count > 0 is annotated", () => {
+    expect(isAnnotated({ annotation_count: 1 })).toBe(true);
+    expect(isAnnotated({ annotation_count: 7 })).toBe(true);
+  });
+  it("annotation_count 0 is not annotated", () => {
+    expect(isAnnotated({ annotation_count: 0 })).toBe(false);
+  });
+});
+
+describe("summarizeProgress", () => {
+  const row = (
+    site: string,
+    annotation_count: number,
+  ): ImageProgress => ({
+    site,
+    annotation_count,
+    status: annotation_count > 0 ? "annotated" : "empty",
+  });
+
+  it("empty input → empty perSite, overall 0/0", () => {
+    expect(summarizeProgress([])).toEqual({
+      perSite: {},
+      overall: { annotated: 0, total: 0 },
+    });
+  });
+
+  it("tallies annotated vs total per site", () => {
+    const result = summarizeProgress([
+      row("cam01", 3),
+      row("cam01", 0),
+      row("cam02", 2),
+      row("cam02", 5),
+      row("cam02", 0),
+    ]);
+    expect(result.perSite).toEqual({
+      cam01: { annotated: 1, total: 2 },
+      cam02: { annotated: 2, total: 3 },
+    });
+    expect(result.overall).toEqual({ annotated: 3, total: 5 });
+  });
+
+  it("a site with no annotated images shows 0/N", () => {
+    const result = summarizeProgress([row("cam09", 0), row("cam09", 0)]);
+    expect(result.perSite.cam09).toEqual({ annotated: 0, total: 2 });
+    expect(result.overall).toEqual({ annotated: 0, total: 2 });
+  });
+
+  it("status='annotated' with count 0 is NOT counted (count is the source of truth)", () => {
+    // Guards the single definition of annotated: annotation_count > 0.
+    const weird: ImageProgress = {
+      site: "cam03",
+      status: "annotated",
+      annotation_count: 0,
+    };
+    const result = summarizeProgress([weird]);
+    expect(result.perSite.cam03).toEqual({ annotated: 0, total: 1 });
   });
 });

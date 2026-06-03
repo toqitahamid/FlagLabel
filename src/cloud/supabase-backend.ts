@@ -71,6 +71,37 @@ export class SupabaseStorageBackend implements StorageBackend {
     }));
   }
 
+  // Team-progress read (#16): like `listImages`, but also pulls the per-row
+  // summary columns (`status`, `annotation_count`) maintained on save (#15) so
+  // the web gallery can show annotated-vs-not and per-site/overall completion
+  // WITHOUT any per-annotation querying. Same identity/order contract as
+  // `listImages` (`id` IS the storage key; sorted site then name). Web-only —
+  // not on the shared `StorageBackend` interface, which the desktop backend also
+  // implements (desktop has no shared dataset / summary columns).
+  async listImagesWithProgress(): Promise<
+    (ImageItem & { status: "empty" | "annotated"; annotation_count: number })[]
+  > {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("site, image_name, storage_path, status, annotation_count")
+      .order("site", { ascending: true })
+      .order("image_name", { ascending: true });
+    if (error) {
+      throw new Error(
+        `SupabaseStorageBackend.listImagesWithProgress failed: ${error.message}`,
+      );
+    }
+    return (data ?? []).map((row) => ({
+      id: row.storage_path,
+      site: row.site,
+      name: row.image_name,
+      status: row.status === "annotated" ? "annotated" : "empty",
+      annotation_count:
+        typeof row.annotation_count === "number" ? row.annotation_count : 0,
+    }));
+  }
+
   // Admin-only ingest (#14): upload one camera folder's image files to Storage
   // under `<site>/<name>` and seed/refresh a row per file. `site` is derived from
   // each file's `webkitRelativePath` (the immediate parent folder = the camera).

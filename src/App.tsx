@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Menu,
@@ -37,6 +37,12 @@ import {
 import { findCollision } from "./annotations/collision";
 import { TauriStorageBackend } from "./cloud/tauri-backend";
 import { SupabaseStorageBackend, fetchIsAdmin } from "./cloud/supabase-backend";
+import {
+  deriveSummary,
+  summarizeProgress,
+  isAnnotated,
+  type ImageProgress,
+} from "./cloud/summary";
 import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
 import { UploadScreen } from "./cloud/UploadScreen";
@@ -872,6 +878,13 @@ function App() {
   const [folderImages, setFolderImages] = useState<string[]>([]);
   const [imageCounts, setImageCounts] = useState<Record<string, Counts>>({});
 
+  // Web-only (cloud): team-progress for the shared dataset (#16), keyed by image
+  // id (the storage path, same string as `folderImages` entries). Populated from
+  // the `annotations` summary columns on gallery (re)load and optimistically on
+  // save. Empty on desktop, where progress comes from local `imageCounts` (L/C/R)
+  // and there is no shared dataset.
+  const [progressById, setProgressById] = useState<Record<string, ImageProgress>>({});
+
   // Web-only (cloud) state. `isAdmin` gates the upload affordance (RLS is the
   // real server-side gate); `showUpload` toggles the upload screen. Both are
   // inert on desktop (the effect that sets isAdmin early-returns on Tauri).
@@ -961,9 +974,23 @@ function App() {
   // composes unchanged. No-op on desktop (folders come from the native dialog).
   const refreshGallery = useCallback(async () => {
     if (isTauri()) return;
+    const backend = backendRef.current;
+    if (!(backend instanceof SupabaseStorageBackend)) return;
     try {
-      const items = await backendRef.current.listImages();
+      // One read pulls both the image list and the per-row progress summary
+      // columns (#16) — recomputed every (re)load so another labeler's saves
+      // surface on refresh, with no per-annotation querying.
+      const items = await backend.listImagesWithProgress();
       setFolderImages(items.map((it) => it.id));
+      const progress: Record<string, ImageProgress> = {};
+      for (const it of items) {
+        progress[it.id] = {
+          site: it.site,
+          status: it.status,
+          annotation_count: it.annotation_count,
+        };
+      }
+      setProgressById(progress);
     } catch (e) {
       console.error("Gallery load failed", e);
     }
@@ -1181,6 +1208,19 @@ function App() {
         setImageCounts((prev) => ({
           ...prev,
           [image.path]: countsByTransect(clicks),
+        }));
+        // Optimistically reflect this save in the team-progress map so the row's
+        // annotated state and the per-site/overall tallies update without a full
+        // refresh. Derived the same way the server columns are (deriveSummary),
+        // so the optimistic value matches the next refresh exactly.
+        const summary = deriveSummary(data, "");
+        setProgressById((prev) => ({
+          ...prev,
+          [image.path]: {
+            site: siteFromPath(image.path),
+            status: summary.status,
+            annotation_count: summary.annotation_count,
+          },
         }));
       } catch (e) {
         console.error("Save failed", e);
@@ -2298,6 +2338,21 @@ function App() {
   const horizontalSpanCount = spanCounts.horizontal_span;
   const flagToGroundSpanCount = spanCounts.flag_to_ground_span;
 
+  // Web-only (cloud): team-progress tallies (#16), per-site ("cam02 — 8/12") and
+  // dataset-wide, rolled up from the `annotations` summary columns in
+  // `progressById`. Recomputed on gallery (re)load and after a local save (both
+  // mutate `progressById`); not tied to `clicks`, so no per-keystroke churn.
+  // Inert on desktop, which has no shared dataset (`progressById` stays empty).
+  const progressSummary = useMemo(
+    () =>
+      summarizeProgress(
+        folderImages
+          .map((p) => progressById[p])
+          .filter((p): p is ImageProgress => p !== undefined),
+      ),
+    [folderImages, progressById],
+  );
+
   const filename = image ? pathBasename(image.path) : null;
   const saveStateText = dirty
     ? "unsaved"
@@ -2378,22 +2433,32 @@ function App() {
                     : ""
                   : "Shared dataset"}
               </div>
-              <div className="folder-meta">
-                <span className="mono">
-                  {
-                    folderImages.filter((p) => {
-                      const c =
-                        image?.path === p
-                          ? countsByTransect(clicks)
-                          : imageCounts[p];
-                      return c && c.L + c.C + c.R > 0;
-                    }).length
-                  }
-                </span>
-                <span> labeled / </span>
-                <span className="mono">{folderImages.length}</span>
-                <span> total</span>
-              </div>
+              {isTauri() ? (
+                <div className="folder-meta">
+                  <span className="mono">
+                    {
+                      folderImages.filter((p) => {
+                        const c =
+                          image?.path === p
+                            ? countsByTransect(clicks)
+                            : imageCounts[p];
+                        return c && c.L + c.C + c.R > 0;
+                      }).length
+                    }
+                  </span>
+                  <span> labeled / </span>
+                  <span className="mono">{folderImages.length}</span>
+                  <span> total</span>
+                </div>
+              ) : (
+                // Web: dataset-wide team progress from the summary columns (#16).
+                <div className="folder-meta">
+                  <span className="mono">{progressSummary.overall.annotated}</span>
+                  <span> annotated / </span>
+                  <span className="mono">{progressSummary.overall.total}</span>
+                  <span> total</span>
+                </div>
+              )}
               {!isTauri() && isAdmin && (
                 <button
                   type="button"
@@ -2420,12 +2485,23 @@ function App() {
                 const total = rowCounts
                   ? rowCounts.L + rowCounts.C + rowCounts.R
                   : 0;
-                const untouched = total === 0;
+                // Desktop: "touched" = any local L/C/R count. Web: "touched" =
+                // annotated per the summary columns (#16), since `imageCounts`
+                // is desktop-only and would otherwise read every row as 0.
+                const untouched = isTauri()
+                  ? total === 0
+                  : !(progressById[path] && isAnnotated(progressById[path]));
                 return (
                   <Fragment key={path}>
                     {showSiteHeader && (
                       <li className="image-site-header" aria-hidden>
                         {site}
+                        {progressSummary.perSite[site] && (
+                          <span className="image-site-progress mono">
+                            {progressSummary.perSite[site].annotated}/
+                            {progressSummary.perSite[site].total}
+                          </span>
+                        )}
                       </li>
                     )}
                     <li
