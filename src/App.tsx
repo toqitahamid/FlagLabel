@@ -930,6 +930,11 @@ function App() {
 
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Transparent canvas layered exactly over `canvasRef`, dedicated to the live
+  // ghost line during span placement. Keeping the line here means the heavy main
+  // canvas (full-res drawImage + every marker) is painted once and is NOT
+  // re-stroked on every mousemove — only this lightweight overlay redraws.
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const storeRef = useRef<Store | null>(null);
@@ -1828,12 +1833,6 @@ function App() {
     resolveCollisionCancel,
   ]);
 
-  // Cursor that matters for the main-canvas repaint: only non-null while a span
-  // is mid-placement (drives the ghost line). When idle this is null on every
-  // render, so the main-draw effect below does NOT re-run on idle mousemove —
-  // the full image + markers are not re-stroked just from hovering.
-  const ghostCursor = pending.kind === "awaitingSecond" ? cursor : null;
-
   // Main canvas
   useEffect(() => {
     if (!image || !imgRef.current || !canvasRef.current || !containerRef.current) {
@@ -1906,28 +1905,73 @@ function App() {
           }
         }
       }
-
-      // Live ghost line from the pending span's first endpoint to the cursor.
-      // ghostCursor is non-null only while awaiting the second click.
-      if (pending.kind === "awaitingSecond" && ghostCursor) {
-        drawGhostLine(
-          ctx,
-          offsetX + pending.first.u * effScale,
-          offsetY + pending.first.v * effScale,
-          offsetX + ghostCursor.u * effScale,
-          offsetY + ghostCursor.v * effScale,
-          pending.transect
-        );
-      }
     }
 
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-    // ghostCursor (not cursor) gates repaint: null while idle so idle hover
-    // doesn't re-run; the cursor object changes each move while placing.
-  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY, pending, ghostCursor]);
+    // The live ghost line lives on a separate overlay canvas (effect below), so
+    // this heavy draw is deliberately NOT keyed on the cursor/pending — it only
+    // re-runs when the image, committed annotations, selection, or view changes.
+  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY]);
+
+  // Ghost-line overlay. Transparent canvas stacked exactly over the main one,
+  // redrawn on every mousemove while a span awaits its second click. Uses the
+  // identical dpr / transform / computeViewParams as the main canvas so the line
+  // lands in the same coordinate space. Keyed on `pending` (not just `cursor`)
+  // so cancelling (Esc) or committing with a stationary mouse still clears it.
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const container = containerRef.current;
+    if (!image || !canvas || !container) return;
+
+    function draw() {
+      const cw = container!.clientWidth;
+      const ch = container!.clientHeight;
+      if (cw === 0 || ch === 0) return;
+      const dpr = window.devicePixelRatio || 1;
+
+      const w = Math.round(cw * dpr);
+      const h = Math.round(ch * dpr);
+      // Setting width/height reallocates + clears the backing store; only do it
+      // when the size actually changed, otherwise just clear.
+      if (canvas!.width !== w || canvas!.height !== h) {
+        canvas!.width = w;
+        canvas!.height = h;
+        canvas!.style.width = `${cw}px`;
+        canvas!.style.height = `${ch}px`;
+      }
+      const ctx = canvas!.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cw, ch);
+
+      if (pending.kind !== "awaitingSecond" || !cursor) return;
+      const { effScale, offsetX, offsetY } = computeViewParams(
+        image!.width,
+        image!.height,
+        viewScale,
+        viewPanX,
+        viewPanY,
+        cw,
+        ch
+      );
+      drawGhostLine(
+        ctx,
+        offsetX + pending.first.u * effScale,
+        offsetY + pending.first.v * effScale,
+        offsetX + cursor.u * effScale,
+        offsetY + cursor.v * effScale,
+        pending.transect
+      );
+    }
+
+    draw();
+    const ro = new ResizeObserver(draw);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [image, pending, cursor, viewScale, viewPanX, viewPanY]);
 
   // Zoom panel
   useEffect(() => {
@@ -2810,6 +2854,13 @@ function App() {
                 )}
               </div>
             </div>
+          )}
+
+          {/* Transparent overlay for the live span-placement ghost line. Stacked
+              over the main canvas; pointer-events:none so it never intercepts
+              clicks. Only mounted with an image, alongside the main canvas. */}
+          {image && (
+            <canvas ref={overlayCanvasRef} className="canvas-overlay" />
           )}
 
           {/* First-run guidance, shown over the image until the user places

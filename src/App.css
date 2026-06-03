@@ -963,6 +963,14 @@ canvas {
   cursor: crosshair;
 }
 
+/* Ghost-line overlay: stacked exactly over the main canvas. pointer-events:none
+   so all mouse interaction (clicks, panning) still reaches the main canvas. */
+.canvas-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 /* ---------- Empty / loading / error states ---------- */
 
 .state-center {
