@@ -2136,7 +2136,7 @@ function App() {
           ) : (
             <div className="state-center">
               <div className="state-tagline">
-                Mark the wire-ground intersection of each distance flag.
+                Mark wire-ground points and flag spans to calibrate distance.
               </div>
               <div className="state-buttons">
                 <button className="btn primary" onClick={handleOpen}>
