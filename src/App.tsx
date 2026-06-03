@@ -19,6 +19,7 @@ import {
   type Counts,
   type SpanType,
   countsFromAnnotations,
+  countsByTransect,
   canonicalizeSpan,
 } from "./annotations/model";
 import {
@@ -76,6 +77,13 @@ const ANNOTATION_TOOLS: { kind: ActiveAnnoType; label: string; title: string }[]
       title: "Flag-to-ground span (R)",
     },
   ];
+
+// Short label per kind (for the sparkline caption), derived from the tool list
+// so it stays in sync.
+const KIND_LABEL = ANNOTATION_TOOLS.reduce(
+  (m, t) => ((m[t.kind] = t.label), m),
+  {} as Record<ActiveAnnoType, string>
+);
 
 type LoadedImage = {
   path: string;
@@ -385,15 +393,22 @@ function CollisionConfirm({
   );
 }
 
-function DistanceSparkline({ clicks }: { clicks: Annotation[] }) {
+function DistanceSparkline({
+  clicks,
+  activeType,
+}: {
+  clicks: Annotation[];
+  activeType: ActiveAnnoType;
+}) {
   const bins: Counts[] = Array.from({ length: 15 }, () => ({
     L: 0,
     C: 0,
     R: 0,
   }));
   for (const c of clicks) {
-    // Sparkline summarizes wire-ground distances only; spans are excluded.
-    if (c.kind !== "wire_ground") continue;
+    // Summarize the distance distribution of the ACTIVE annotation type, so
+    // the sparkline always reflects what the labeler is currently placing.
+    if (c.kind !== activeType) continue;
     const i = Math.round(c.distance) - 1;
     if (i >= 0 && i < 15) bins[i][c.transect]++;
   }
@@ -828,7 +843,7 @@ function App() {
             path: jsonPath,
           });
           if (!content) continue;
-          result[path] = countsFromAnnotations(parseAnnotationFile(JSON.parse(content)));
+          result[path] = countsByTransect(parseAnnotationFile(JSON.parse(content)));
         } catch (e) {
           console.error("Failed to read", jsonPath, e);
         }
@@ -896,7 +911,7 @@ function App() {
       setDirty(false);
       setImageCounts((prev) => ({
         ...prev,
-        [image.path]: countsFromAnnotations(clicks),
+        [image.path]: countsByTransect(clicks),
       }));
     } catch (e) {
       console.error("Save failed", e);
@@ -2032,7 +2047,7 @@ function App() {
                     folderImages.filter((p) => {
                       const c =
                         image?.path === p
-                          ? countsFromAnnotations(clicks)
+                          ? countsByTransect(clicks)
                           : imageCounts[p];
                       return c && c.L + c.C + c.R > 0;
                     }).length
@@ -2046,7 +2061,7 @@ function App() {
             <ul className="image-list">
               {folderImages.map((path, idx) => {
                 const isActive = image?.path === path;
-                const liveCounts = isActive ? countsFromAnnotations(clicks) : null;
+                const liveCounts = isActive ? countsByTransect(clicks) : null;
                 const persisted = imageCounts[path];
                 const rowCounts = liveCounts ?? persisted ?? null;
                 const total = rowCounts
@@ -2255,7 +2270,12 @@ function App() {
                   <span>Auto-advance 1→15</span>
                   <span className="key-hint">A</span>
                 </label>
-                <DistanceSparkline clicks={clicks} />
+                <div className="sparkline-block">
+                  <span className="sparkline-caption">
+                    {KIND_LABEL[activeType]} · by distance
+                  </span>
+                  <DistanceSparkline clicks={clicks} activeType={activeType} />
+                </div>
               </div>
             </div>
 

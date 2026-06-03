@@ -560,11 +560,24 @@ body,
   margin-left: auto;
 }
 
+.sparkline-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.sparkline-caption {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
 .distance-sparkline {
   display: block;
   width: 100%;
   height: auto;
-  margin-top: 8px;
 }
 
 /* ---------- Inline link ---------- */

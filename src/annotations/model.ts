@@ -57,6 +57,15 @@ export function countsFromAnnotations(anns: Annotation[]): Counts {
   return out;
 }
 
+// Per-transect counts across ALL annotation kinds (used for folder-sidebar
+// coverage, so a spans-only image isn't shown as unlabeled). Unlike
+// countsFromAnnotations (wire-ground only), every kind contributes.
+export function countsByTransect(anns: Annotation[]): Counts {
+  const out: Counts = { L: 0, C: 0, R: 0 };
+  for (const a of anns) out[a.transect]++;
+  return out;
+}
+
 export type Point = { u: number; v: number };
 
 export type SpanEndpoints = { u1: number; v1: number; u2: number; v2: number };

@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { countsFromAnnotations, canonicalizeSpan, type Annotation } from "./model";
+import {
+  countsFromAnnotations,
+  countsByTransect,
+  canonicalizeSpan,
+  type Annotation,
+} from "./model";
 import type { HorizontalSpan, FlagToGroundSpan } from "./model";
 
 describe("countsFromAnnotations", () => {
@@ -32,6 +37,22 @@ describe("countsFromAnnotations", () => {
       },
     ];
     expect(countsFromAnnotations(anns)).toEqual({ L: 1, C: 0, R: 0 });
+  });
+});
+
+describe("countsByTransect", () => {
+  it("counts every annotation kind by transect (not just wire-ground)", () => {
+    const anns: Annotation[] = [
+      { kind: "wire_ground", u: 1, v: 1, transect: "L", distance: 1 },
+      { kind: "vertical_span", u1: 1, v1: 1, u2: 1, v2: 2, transect: "L", distance: 1 },
+      { kind: "horizontal_span", u1: 1, v1: 1, u2: 2, v2: 1, transect: "C", distance: 2 },
+      { kind: "flag_to_ground_span", u1: 1, v1: 1, u2: 1, v2: 9, transect: "R", distance: 3 },
+    ];
+    expect(countsByTransect(anns)).toEqual({ L: 2, C: 1, R: 1 });
+  });
+
+  it("returns all-zero counts for an empty list", () => {
+    expect(countsByTransect([])).toEqual({ L: 0, C: 0, R: 0 });
   });
 });
 
