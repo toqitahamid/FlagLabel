@@ -1161,6 +1161,32 @@ function App() {
   const handleSave = useCallback(async () => {
     if (!image) return;
     if (clicks.length === 0 && !dirty) return;
+    // Web (cloud) save path: there is no local clicks dir or folder picker —
+    // annotations persist to Supabase keyed by (site, image_name). Build the same
+    // schema-v2 file the desktop branch builds and write it via the backend, then
+    // mirror the desktop bookkeeping (lastSavedAt / dirty / imageCounts). The
+    // desktop block below is left byte-identical.
+    if (!isTauri()) {
+      const meta: FileMeta = {
+        site: siteFromPath(image.path),
+        image: pathBasename(image.path),
+        image_w: image.width,
+        image_h: image.height,
+      };
+      const data = buildAnnotationFile(meta, clicks, appVersion, new Date().toISOString());
+      try {
+        await backendRef.current.writeAnnotationFile(itemFromPath(image.path), data);
+        setLastSavedAt(Date.now());
+        setDirty(false);
+        setImageCounts((prev) => ({
+          ...prev,
+          [image.path]: countsByTransect(clicks),
+        }));
+      } catch (e) {
+        console.error("Save failed", e);
+      }
+      return;
+    }
     let dir = clicksDir;
     if (!dir) {
       // Picking a save folder uses the native dialog (desktop-only). On web there
@@ -1346,9 +1372,14 @@ function App() {
     dispatchPending({ type: "cancel" });
   }, [activeType, currentTransect, currentDistance, image]);
 
-  // F4: auto-save 5s after the last change (only when clicksDir is set)
+  // F4: auto-save 5s after the last change. The dirty flag is the trigger (never
+  // gate on clicks.length — clearing a previously-saved image is a legitimate
+  // save). Desktop needs a chosen clicks dir to know where to write; the web
+  // backend keys on (site, image_name) and ignores clicksDir, so the dir gate is
+  // desktop-only — mirroring the auto-load effect.
   useEffect(() => {
-    if (!dirty || !image || !clicksDir) return;
+    if (!dirty || !image) return;
+    if (isTauri() && !clicksDir) return;
     const id = setTimeout(() => {
       handleSave();
     }, 5000);

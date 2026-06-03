@@ -2,6 +2,7 @@ import type { AnnotationFile } from "../annotations/schema";
 import { getSupabaseClient } from "./supabase-client";
 import type { ImageItem, StorageBackend } from "./storage-backend";
 import { uploadTargetFromRelativePath } from "./upload-identity";
+import { deriveSummary } from "./summary";
 
 // Web (cloud) backend: persists to the Supabase `annotations` table and resolves
 // image URLs from the `photos` Storage bucket. The whole `src/annotations/` core
@@ -19,14 +20,6 @@ import { uploadTargetFromRelativePath } from "./upload-identity";
 // Storage bucket layout (per ADR-0003): `photos/<site>/<name>`, with `site` =
 // camera folder. The item `id` is treated as that storage key.
 const PHOTOS_BUCKET = "photos";
-
-// The `annotations` table holds the schema-v2 object verbatim in a `data jsonb`
-// column, keyed by `(site, image_name)` (see ADR-0003 / issue #12).
-type AnnotationRow = {
-  site: string;
-  image_name: string;
-  data: AnnotationFile;
-};
 
 // Result of uploading one camera folder: how many files succeeded vs. were
 // skipped (non-image) or errored, so the upload screen can show a final count.
@@ -159,22 +152,44 @@ export class SupabaseStorageBackend implements StorageBackend {
     return data?.data ?? null;
   }
 
-  // Upserts the schema-v2 blob (last write wins, per ADR-0003). The DB derives
-  // the summary columns (labeler/status/annotation_count/updated_at) via the
-  // server-side trigger/policy; the client only owns the blob.
+  // Persists the schema-v2 blob (last write wins, per ADR-0003) by UPDATEing the
+  // existing row keyed by (site, image_name). The row already exists — the admin
+  // uploader (#14) seeds one per image with a NOT-NULL `storage_path`. We must
+  // NOT upsert: an upsert issues INSERT ... ON CONFLICT, and the table's INSERT
+  // policy is admin-only under RLS, so a normal labeler's save would be denied.
+  // There is NO server-side trigger; the client owns the derived summary columns
+  // (labeler/status/annotation_count) via `deriveSummary`, plus `updated_at`.
+  // `storage_path` and the lock columns are intentionally left untouched.
   async writeAnnotationFile(item: ImageItem, file: AnnotationFile): Promise<void> {
     const supabase = getSupabaseClient();
-    const row: AnnotationRow = {
-      site: item.site,
-      image_name: item.name,
-      data: file,
-    };
-    const { error } = await supabase
+    // The labeler is the signed-in user's email; deriveSummary records it
+    // verbatim (empty string if somehow absent — never blocks the save).
+    const { data: userData } = await supabase.auth.getUser();
+    const labeler = userData.user?.email ?? "";
+    const summary = deriveSummary(file, labeler);
+    // `.select()` makes the UPDATE return the affected rows so we can detect a
+    // zero-row match (image not registered) — a bare update succeeds silently
+    // with data:null even when nothing matched.
+    const { data, error } = await supabase
       .from("annotations")
-      .upsert(row, { onConflict: "site,image_name" });
+      .update({
+        data: file,
+        labeler: summary.labeler,
+        status: summary.status,
+        annotation_count: summary.annotation_count,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("site", item.site)
+      .eq("image_name", item.name)
+      .select("site");
     if (error) {
       throw new Error(
         `SupabaseStorageBackend.writeAnnotationFile failed for "${item.site}/${item.name}": ${error.message}`,
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new Error(
+        `SupabaseStorageBackend.writeAnnotationFile: no annotations row for "${item.site}/${item.name}" (image not registered by the admin uploader).`,
       );
     }
   }
