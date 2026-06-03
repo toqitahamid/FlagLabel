@@ -300,6 +300,82 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   },
 ];
 
+// A small animated schematic of a numbered flag on a wire, showing the four
+// annotation types placing themselves in turn: the wire–ground point (Q), the
+// vertical (W) and horizontal (E) flag spans, and the full flag-to-ground span
+// (R). Pure SVG + CSS; the rolling green highlight is suppressed under
+// prefers-reduced-motion, which leaves all four annotations drawn and legible.
+function AnnotationGuide() {
+  return (
+    <svg
+      className="annotation-guide"
+      viewBox="0 0 260 184"
+      role="img"
+      aria-label="A flag on a wire. The four annotation types: Q marks the wire–ground point, W spans the flag top to bottom, E spans it left to right, and R spans from the flag top down to the wire base at the ground."
+    >
+      {/* ground line + texture */}
+      <line className="ag-ground" x1="20" y1="150" x2="240" y2="150" />
+      {[36, 60, 84, 108, 156, 180, 204, 228].map((x) => (
+        <line
+          key={x}
+          className="ag-ground-tick"
+          x1={x}
+          y1="150"
+          x2={x - 7}
+          y2="158"
+        />
+      ))}
+      {/* wire (solid above ground, dashed where buried) */}
+      <line className="ag-wire" x1="130" y1="58" x2="130" y2="150" />
+      <line
+        className="ag-wire ag-wire--buried"
+        x1="130"
+        y1="150"
+        x2="130"
+        y2="163"
+      />
+      {/* flag body */}
+      <rect className="ag-flag" x="105" y="24" width="50" height="34" rx="2" />
+
+      {/* R — flag-to-ground span (drawn first so the others read above it) */}
+      <g className="ag-anno ag-anno--r">
+        <line x1="150" y1="24" x2="150" y2="150" />
+        <line x1="145" y1="24" x2="155" y2="24" />
+        <line x1="145" y1="150" x2="155" y2="150" />
+        <text x="160" y="100">R</text>
+      </g>
+
+      {/* W — vertical flag span */}
+      <g className="ag-anno ag-anno--w">
+        <line x1="113" y1="24" x2="113" y2="58" />
+        <line x1="108" y1="24" x2="118" y2="24" />
+        <line x1="108" y1="58" x2="118" y2="58" />
+        <text x="98" y="44" textAnchor="end">
+          W
+        </text>
+      </g>
+
+      {/* E — horizontal flag span */}
+      <g className="ag-anno ag-anno--e">
+        <line x1="105" y1="46" x2="155" y2="46" />
+        <line x1="105" y1="41" x2="105" y2="51" />
+        <line x1="155" y1="41" x2="155" y2="51" />
+        <text x="130" y="74" textAnchor="middle">
+          E
+        </text>
+      </g>
+
+      {/* Q — wire–ground point */}
+      <g className="ag-anno ag-anno--q">
+        <circle cx="130" cy="150" r="4.5" />
+        <text x="130" y="178" textAnchor="middle">
+          Q
+        </text>
+      </g>
+    </svg>
+  );
+}
+
 function KeyboardHelp({
   onClose,
   appVersion,
@@ -336,6 +412,10 @@ function KeyboardHelp({
           fills distances 1 through 15 in sequence. Files auto-save 5 seconds
           after the last change once a clicks folder is chosen.
         </p>
+
+        <div className="help-guide">
+          <AnnotationGuide />
+        </div>
 
         <div className="help-grid">
           {HELP_SECTIONS.map((section) => (
@@ -2198,47 +2278,42 @@ function App() {
           ) : (
             <div className="state-center">
               <div className="intro">
+                <AnnotationGuide />
                 <p className="state-tagline">
                   Mark wire–ground points and flag spans to calibrate distance.
                 </p>
-                <ol className="intro-steps">
-                  <li className="intro-step">
-                    <span className="intro-step-n">1</span>
-                    <span className="intro-step-body">
-                      Open an image, or a folder to step through a whole site.
-                      <span className="intro-keys">
-                        <kbd>⌘O</kbd>
-                        <kbd>⌘⇧O</kbd>
-                      </span>
+                <ul className="intro-tools" aria-label="Annotation tools">
+                  <li className="intro-tool">
+                    <kbd>Q</kbd>
+                    <span>
+                      <b>Wire–ground</b> · one click at the wire–ground point
                     </span>
                   </li>
-                  <li className="intro-step">
-                    <span className="intro-step-n">2</span>
-                    <span className="intro-step-body">
-                      Pick a tool, transect, and distance.
-                      <span className="intro-keys">
-                        <kbd>Q</kbd>
-                        <kbd>W</kbd>
-                        <kbd>E</kbd>
-                        <kbd>R</kbd>
-                        <span className="intro-keys-sep">·</span>
-                        <kbd>1</kbd>
-                        <kbd>2</kbd>
-                        <kbd>3</kbd>
-                        <span className="intro-keys-sep">·</span>
-                        <kbd>↑</kbd>
-                        <kbd>↓</kbd>
-                      </span>
+                  <li className="intro-tool">
+                    <kbd>W</kbd>
+                    <span>
+                      <b>Vertical</b> · two clicks, top → bottom of the flag
                     </span>
                   </li>
-                  <li className="intro-step">
-                    <span className="intro-step-n">3</span>
-                    <span className="intro-step-body">
-                      Click the wire–ground point. The zoom panel places it to
-                      sub-pixel precision.
+                  <li className="intro-tool">
+                    <kbd>E</kbd>
+                    <span>
+                      <b>Horizontal</b> · two clicks, left → right of the flag
                     </span>
                   </li>
-                </ol>
+                  <li className="intro-tool">
+                    <kbd>R</kbd>
+                    <span>
+                      <b>Flag → ground</b> · two clicks, flag top → wire base
+                    </span>
+                  </li>
+                </ul>
+                <p className="intro-flow">
+                  Set the transect <kbd>1</kbd>
+                  <kbd>2</kbd>
+                  <kbd>3</kbd> and distance <kbd>↑</kbd>
+                  <kbd>↓</kbd>, then click to place.
+                </p>
                 <div className="state-buttons">
                   <button className="btn primary" onClick={handleOpen}>
                     Open image
@@ -2248,6 +2323,7 @@ function App() {
                   </button>
                 </div>
                 <span className="hint">
+                  <kbd>⌘O</kbd> file · <kbd>⌘⇧O</kbd> folder ·{" "}
                   <button
                     className="link"
                     onClick={() => setShowHelp(true)}

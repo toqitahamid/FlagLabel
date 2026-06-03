@@ -1071,54 +1071,137 @@ canvas {
   max-width: none;
 }
 
-.intro-steps {
+/* Animated schematic shared by the empty-state intro and the help overlay. */
+.annotation-guide {
+  display: block;
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+}
+
+.ag-ground {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.ag-ground-tick {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+
+.ag-wire {
+  stroke: var(--text-tertiary);
+  stroke-width: 2;
+  fill: none;
+}
+
+.ag-wire--buried {
+  opacity: 0.55;
+  stroke-dasharray: 2 3;
+}
+
+.ag-flag {
+  fill: var(--bg-elevated);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+/* Each annotation defaults to a readable secondary ink — the resting state
+   shown when motion is reduced. The pulse dims it, then rolls a green
+   highlight through the four types in turn. */
+.ag-anno {
+  color: var(--text-secondary);
+}
+
+.ag-anno line {
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.ag-anno circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.ag-anno text {
+  fill: currentColor;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ag-anno--q {
+  animation: ag-pulse 6.4s linear infinite;
+}
+.ag-anno--w {
+  animation: ag-pulse 6.4s linear infinite 1.6s;
+}
+.ag-anno--e {
+  animation: ag-pulse 6.4s linear infinite 3.2s;
+}
+.ag-anno--r {
+  animation: ag-pulse 6.4s linear infinite 4.8s;
+}
+
+@keyframes ag-pulse {
+  0%,
+  28%,
+  100% {
+    color: var(--text-tertiary);
+    opacity: 0.5;
+  }
+  6%,
+  18% {
+    color: var(--accent);
+    opacity: 1;
+  }
+}
+
+.intro-tools {
   list-style: none;
   margin: 0;
   padding: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 7px;
   text-align: left;
 }
 
-.intro-step {
+.intro-tool {
   display: grid;
   grid-template-columns: 22px 1fr;
-  gap: 12px;
-  align-items: start;
-  font-size: 13px;
-  line-height: 1.5;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
-.intro-step-n {
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
+.intro-tool b {
+  color: var(--text-primary);
   font-weight: 600;
-  color: var(--accent);
-  border: 1px solid var(--border-subtle);
-  border-radius: 50%;
 }
 
-.intro-keys {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin-left: 8px;
-  vertical-align: baseline;
+.intro-flow {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  text-align: center;
 }
 
-.intro-keys-sep {
-  color: var(--border-strong);
-  margin: 0 2px;
+.intro-flow kbd {
+  margin: 0 1px;
+}
+
+/* The schematic in the help overlay, centered above the shortcut grid. */
+.help-guide {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 18px;
 }
 
 .intro kbd,
