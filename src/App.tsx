@@ -51,7 +51,13 @@ import {
 } from "./cloud/summary";
 import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
-import { validateSiteName } from "./cloud/site-upload";
+import {
+  validateSiteName,
+  validateStem,
+  renameImageName,
+  splitImageName,
+} from "./cloud/site-upload";
+import { UploadModal } from "./cloud/UploadModal";
 import { useImageLock } from "./cloud/useImageLock";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
@@ -229,6 +235,23 @@ function ImageIcon({ className }: { className?: string }) {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <circle cx="8.5" cy="8.5" r="1.5" />
       <path d="m21 15-5-5L5 21" />
+    </svg>
+  );
+}
+function RenameIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
     </svg>
   );
 }
@@ -959,16 +982,21 @@ function App() {
   const [newFolderOpen, setNewFolderOpen] = useState<boolean>(false);
   const [newFolderName, setNewFolderName] = useState<string>("");
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
-  const [uploadStatus, setUploadStatus] = useState<
-    { site: string; done: number; total: number } | null
-  >(null);
-  const [uploadResult, setUploadResult] = useState<
-    { site: string; uploaded: number; skipped: number; failed: number } | null
-  >(null);
-  const addImagesInputRef = useRef<HTMLInputElement | null>(null);
-  const uploadSiteRef = useRef<string | null>(null);
+  // The folder whose "Add images" modal is open (null = closed). Replaces the old
+  // raw hidden-file-input flow with the richer drag-drop UploadModal.
+  const [uploadModalSite, setUploadModalSite] = useState<string | null>(null);
+  // Right-click context menu + delete-confirm popover + inline rename target, all
+  // keyed by the row's {type, site, name}. `busy` flags an in-flight destructive
+  // op so the confirm/rename UIs can disable themselves.
+  type RowTarget = { type: "folder" | "image"; site: string; name: string };
+  const [ctxMenu, setCtxMenu] = useState<(RowTarget & { x: number; y: number }) | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<(RowTarget & { x: number; y: number }) | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RowTarget | null>(null);
+  const [rowBusy, setRowBusy] = useState<boolean>(false);
+  const [rowError, setRowError] = useState<string | null>(null);
   const newFolderInputRef = useRef<HTMLInputElement | null>(null);
   const newFolderSubmittingRef = useRef<boolean>(false);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
 
   // Web-only (cloud) soft edit lock (#17). Keyed on the active image's row
   // (site, image_name); the storage path (== image.path on web) drives the
@@ -1523,6 +1551,35 @@ function App() {
     expandSite(siteFromPath(image.path));
   }, [image, expandSite]);
 
+  // Dismiss the context menu on any outside click, Esc, or scroll.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCtxMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
+  // Focus + preselect the inline rename input when it opens.
+  useEffect(() => {
+    if (!renameTarget) return;
+    requestAnimationFrame(() => {
+      const el = renameInputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    });
+  }, [renameTarget]);
+
   const openNewFolder = useCallback(() => {
     setNewFolderError(null);
     setNewFolderName("");
@@ -1572,52 +1629,144 @@ function App() {
     else closeNewFolder();
   }, [newFolderName, submitNewFolder, closeNewFolder]);
 
+  // The "+" / "Add images" affordance opens the drag-drop UploadModal for a site.
   const triggerAddImages = useCallback((site: string) => {
-    uploadSiteRef.current = site;
-    const input = addImagesInputRef.current;
-    if (input) {
-      input.value = "";
-      input.click();
-    }
+    setUploadModalSite(site);
   }, []);
 
-  const onAddImagesPicked = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const site = uploadSiteRef.current;
+  // Tear down the active image without saving: nulls it (which releases the edit
+  // lock via the useImageLock cleanup keyed on imageId) and clears the dirty flag
+  // (which cancels the pending 5s autosave). Used when the active image — or the
+  // folder containing it — is about to be deleted or renamed out from under us.
+  const clearActiveImage = useCallback(() => {
+    setImage(null);
+    setClicks([]);
+    setSelectedIdx(null);
+    setDirty(false);
+    dispatchPending({ type: "cancel" });
+  }, []);
+
+  // Right-click a folder/image row → context menu at the cursor.
+  const openRowMenu = useCallback(
+    (e: React.MouseEvent, target: RowTarget) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setRowError(null);
+      setDeleteTarget(null);
+      setCtxMenu({ ...target, x: e.clientX, y: e.clientY });
+    },
+    [],
+  );
+
+  const handleDeleteConfirmed = useCallback(async () => {
+    const t = deleteTarget;
+    const backend = backendRef.current;
+    if (!t || !(backend instanceof SupabaseStorageBackend)) return;
+    setRowBusy(true);
+    setRowError(null);
+    try {
+      // If the active image is being removed (directly, or via its folder), tear
+      // it down first so no autosave fires against a row that's about to vanish.
+      const activeSite = image ? siteFromPath(image.path) : null;
+      const activeAffected =
+        t.type === "image"
+          ? image?.path === `${t.site}/${t.name}`
+          : activeSite === t.site;
+      if (activeAffected) clearActiveImage();
+      if (t.type === "image") await backend.deleteImage(t.site, t.name);
+      else await backend.deleteSite(t.site);
+      setDeleteTarget(null);
+      await refreshGallery();
+    } catch (err) {
+      setRowError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRowBusy(false);
+    }
+  }, [deleteTarget, image, clearActiveImage, refreshGallery]);
+
+  // Inline rename (folder or image). The visible text becomes an input; Enter
+  // commits, Esc cancels. For an image only the stem is editable (extension is
+  // preserved); for a folder the whole name. If the active image is involved we
+  // save it first (so edits land on the OLD key) then tear it down, since its
+  // storage path / row key changes underneath.
+  const submitRename = useCallback(
+    async (rawValue: string) => {
+      const t = renameTarget;
       const backend = backendRef.current;
-      const picked = e.target.files;
-      if (
-        !site ||
-        !picked ||
-        picked.length === 0 ||
-        !(backend instanceof SupabaseStorageBackend)
-      ) {
-        return;
-      }
-      const files = Array.from(picked);
-      setUploadResult(null);
-      setUploadStatus({ site, done: 0, total: files.length });
-      try {
-        const r = await backend.uploadImagesToSite(site, files, (done, total) =>
-          setUploadStatus({ site, done, total }),
+      if (!t || !(backend instanceof SupabaseStorageBackend)) return;
+
+      let newName: string;
+      if (t.type === "folder") {
+        const res = validateSiteName(rawValue);
+        if (!res.ok) {
+          setRowError(res.reason);
+          return;
+        }
+        if (res.name === t.name) {
+          setRenameTarget(null);
+          return;
+        }
+        if (allSites.includes(res.name)) {
+          setRowError("A folder with that name already exists.");
+          return;
+        }
+        newName = res.name;
+      } else {
+        const res = validateStem(rawValue);
+        if (!res.ok) {
+          setRowError(res.reason);
+          return;
+        }
+        newName = renameImageName(t.name, res.stem);
+        if (newName === t.name) {
+          setRenameTarget(null);
+          return;
+        }
+        const siblings = (imagesBySite.get(t.site) ?? []).map((x) =>
+          pathBasename(x.path),
         );
-        setUploadResult({
-          site,
-          uploaded: r.uploaded,
-          skipped: r.skipped,
-          failed: r.failed.length,
-        });
+        if (siblings.includes(newName)) {
+          setRowError("An image with that name already exists in this folder.");
+          return;
+        }
+      }
+
+      setRowBusy(true);
+      setRowError(null);
+      try {
+        const activeSite = image ? siteFromPath(image.path) : null;
+        const activeAffected =
+          t.type === "image"
+            ? image?.path === `${t.site}/${t.name}`
+            : activeSite === t.site;
+        // Persist any in-flight edits on the OLD key before the move, then drop
+        // the active image (its path/key is changing).
+        if (activeAffected) {
+          if (dirty) await handleSave();
+          clearActiveImage();
+        }
+        if (t.type === "folder") await backend.renameSite(t.name, newName);
+        else await backend.renameImage(t.site, t.name, newName);
+        setRenameTarget(null);
         await refreshGallery();
-        expandSite(site);
+        if (t.type === "folder") expandSite(newName);
       } catch (err) {
-        console.error("Add images failed", err);
-        setUploadResult({ site, uploaded: 0, skipped: 0, failed: files.length });
+        setRowError(err instanceof Error ? err.message : String(err));
       } finally {
-        setUploadStatus(null);
-        uploadSiteRef.current = null;
+        setRowBusy(false);
       }
     },
-    [refreshGallery, expandSite],
+    [
+      renameTarget,
+      allSites,
+      imagesBySite,
+      image,
+      dirty,
+      handleSave,
+      clearActiveImage,
+      refreshGallery,
+      expandSite,
+    ],
   );
 
   const menuHandlersRef = useRef({
@@ -2921,27 +3070,9 @@ function App() {
                 />
               </div>
             )}
-            {!isTauri() && newFolderError && (
+            {!isTauri() && (newFolderError || rowError) && (
               <div className="folder-inline-error" role="alert">
-                {newFolderError}
-              </div>
-            )}
-            {!isTauri() && uploadStatus && (
-              <div className="folder-upload-status" role="status">
-                Uploading to {uploadStatus.site}… {uploadStatus.done}/
-                {uploadStatus.total}
-              </div>
-            )}
-            {!isTauri() && uploadResult && !uploadStatus && (
-              <div className="folder-upload-status" role="status">
-                {uploadResult.site}: {uploadResult.uploaded} added
-                {uploadResult.skipped > 0 && <> · {uploadResult.skipped} skipped</>}
-                {uploadResult.failed > 0 && (
-                  <>
-                    {" "}
-                    · <span className="upload-failed">{uploadResult.failed} failed</span>
-                  </>
-                )}
+                {newFolderError ?? rowError}
               </div>
             )}
 
@@ -2991,35 +3122,65 @@ function App() {
                   const imgs = imagesBySite.get(site) ?? [];
                   const collapsed = collapsedSites.has(site);
                   const prog = progressSummary.perSite[site];
+                  const folderRenaming =
+                    renameTarget?.type === "folder" && renameTarget.name === site;
                   return (
                     <div className={`folder ${collapsed ? "" : "open"}`} key={site}>
                       <div
                         className="folder-row"
-                        onClick={() => toggleSite(site)}
+                        onClick={() => !folderRenaming && toggleSite(site)}
+                        onContextMenu={
+                          isAdmin
+                            ? (e) =>
+                                openRowMenu(e, { type: "folder", site, name: site })
+                            : undefined
+                        }
                         title={site}
                       >
                         <ChevronIcon className="chev" />
                         <FolderIcon className="folder-icon" />
-                        <span className="folder-name">{site}</span>
-                        {prog ? (
-                          <span className="folder-badge mono">
-                            {prog.annotated}/{prog.total}
-                          </span>
-                        ) : (
-                          <span className="folder-badge empty">empty</span>
-                        )}
-                        {isAdmin && (
-                          <button
-                            type="button"
-                            className="folder-add"
-                            title={`Add images to ${site}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              triggerAddImages(site);
+                        {folderRenaming ? (
+                          <input
+                            ref={renameInputRef}
+                            className="rename-input"
+                            defaultValue={site}
+                            disabled={rowBusy}
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") submitRename(e.currentTarget.value);
+                              else if (e.key === "Escape") {
+                                setRenameTarget(null);
+                                setRowError(null);
+                              }
                             }}
-                          >
-                            <PlusIcon />
-                          </button>
+                            onBlur={(e) => {
+                              if (!rowBusy) submitRename(e.currentTarget.value);
+                            }}
+                          />
+                        ) : (
+                          <>
+                            <span className="folder-name">{site}</span>
+                            {prog ? (
+                              <span className="folder-badge mono">
+                                {prog.annotated}/{prog.total}
+                              </span>
+                            ) : (
+                              <span className="folder-badge empty">empty</span>
+                            )}
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                className="folder-add"
+                                title={`Add images to ${site}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  triggerAddImages(site);
+                                }}
+                              >
+                                <PlusIcon />
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                       {!collapsed && (
@@ -3032,6 +3193,7 @@ function App() {
                           ) : (
                             imgs.map(({ path, idx }) => {
                               const isActive = image?.path === path;
+                              const name = pathBasename(path);
                               const liveCounts = isActive
                                 ? countsByTransect(clicks)
                                 : null;
@@ -3041,33 +3203,68 @@ function App() {
                               const untouched = !(
                                 progressById[path] && isAnnotated(progressById[path])
                               );
+                              const imgRenaming =
+                                renameTarget?.type === "image" &&
+                                renameTarget.site === site &&
+                                renameTarget.name === name;
                               return (
                                 <div
                                   key={path}
                                   className={`image-item ${isActive ? "active" : ""} ${
                                     untouched && !isActive ? "untouched" : ""
                                   }`}
-                                  onClick={() => navigateToIndex(idx)}
+                                  onClick={() => !imgRenaming && navigateToIndex(idx)}
+                                  onContextMenu={
+                                    isAdmin
+                                      ? (e) =>
+                                          openRowMenu(e, {
+                                            type: "image",
+                                            site,
+                                            name,
+                                          })
+                                      : undefined
+                                  }
                                   title={path}
                                 >
                                   <ImageIcon className="img-icon" />
-                                  <span className="image-item-name">
-                                    {pathBasename(path)}
-                                  </span>
-                                  {liveCounts && total > 0 && (
-                                    <span className="image-item-counts">
-                                      <span style={{ color: TRANSECT_COLORS.L }}>
-                                        {liveCounts.L}
-                                      </span>
-                                      <span className="dot">·</span>
-                                      <span style={{ color: TRANSECT_COLORS.C }}>
-                                        {liveCounts.C}
-                                      </span>
-                                      <span className="dot">·</span>
-                                      <span style={{ color: TRANSECT_COLORS.R }}>
-                                        {liveCounts.R}
-                                      </span>
-                                    </span>
+                                  {imgRenaming ? (
+                                    <input
+                                      ref={renameInputRef}
+                                      className="rename-input"
+                                      defaultValue={splitImageName(name).stem}
+                                      disabled={rowBusy}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter")
+                                          submitRename(e.currentTarget.value);
+                                        else if (e.key === "Escape") {
+                                          setRenameTarget(null);
+                                          setRowError(null);
+                                        }
+                                      }}
+                                      onBlur={(e) => {
+                                        if (!rowBusy) submitRename(e.currentTarget.value);
+                                      }}
+                                    />
+                                  ) : (
+                                    <>
+                                      <span className="image-item-name">{name}</span>
+                                      {liveCounts && total > 0 && (
+                                        <span className="image-item-counts">
+                                          <span style={{ color: TRANSECT_COLORS.L }}>
+                                            {liveCounts.L}
+                                          </span>
+                                          <span className="dot">·</span>
+                                          <span style={{ color: TRANSECT_COLORS.C }}>
+                                            {liveCounts.C}
+                                          </span>
+                                          <span className="dot">·</span>
+                                          <span style={{ color: TRANSECT_COLORS.R }}>
+                                            {liveCounts.R}
+                                          </span>
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </div>
                               );
@@ -3079,17 +3276,6 @@ function App() {
                   );
                 })}
               </div>
-            )}
-
-            {!isTauri() && isAdmin && (
-              <input
-                ref={addImagesInputRef}
-                type="file"
-                multiple
-                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
-                style={{ display: "none" }}
-                onChange={onAddImagesPicked}
-              />
             )}
           </aside>
         )}
@@ -3458,6 +3644,137 @@ function App() {
           <span>no image</span>
         )}
       </footer>
+
+      {/* Web admin: right-click context menu for a folder/image row. */}
+      {!isTauri() && isAdmin && ctxMenu && (
+        <div
+          className="row-ctx-menu"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="row-ctx-label">
+            {ctxMenu.type === "folder" ? "Folder" : "Image"} · {ctxMenu.name}
+          </div>
+          {ctxMenu.type === "folder" && (
+            <button
+              type="button"
+              onClick={() => {
+                triggerAddImages(ctxMenu.site);
+                setCtxMenu(null);
+              }}
+            >
+              <PlusIcon /> Add images…
+            </button>
+          )}
+          {ctxMenu.type === "image" && (
+            <button
+              type="button"
+              onClick={() => {
+                const idx = folderImages.indexOf(`${ctxMenu.site}/${ctxMenu.name}`);
+                if (idx >= 0) navigateToIndex(idx);
+                setCtxMenu(null);
+              }}
+            >
+              <ImageIcon /> Open
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setRenameTarget({
+                type: ctxMenu.type,
+                site: ctxMenu.site,
+                name: ctxMenu.name,
+              });
+              if (ctxMenu.type === "folder") expandSite(ctxMenu.site);
+              setRowError(null);
+              setCtxMenu(null);
+            }}
+          >
+            <RenameIcon /> Rename
+          </button>
+          <div className="row-ctx-sep" />
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setDeleteTarget({ ...ctxMenu });
+              setCtxMenu(null);
+            }}
+          >
+            <TrashIcon /> Delete {ctxMenu.type}
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirmation popover (no native dialog). */}
+      {!isTauri() && isAdmin && deleteTarget && (
+        <>
+          <div
+            className="row-confirm-backdrop"
+            onClick={() => !rowBusy && setDeleteTarget(null)}
+          />
+          <div
+            className="row-confirm"
+            style={{
+              left: Math.min(deleteTarget.x, window.innerWidth - 270),
+              top: Math.min(deleteTarget.y, window.innerHeight - 150),
+            }}
+          >
+            <p className="row-confirm-title">
+              Delete {deleteTarget.type} “{deleteTarget.name}”?
+            </p>
+            <p className="row-confirm-sub">
+              {deleteTarget.type === "folder"
+                ? "Removes the folder and all its images & annotations. This can’t be undone."
+                : "Removes this image and its annotations. This can’t be undone."}
+            </p>
+            {rowError && (
+              <p className="row-confirm-error" role="alert">
+                {rowError}
+              </p>
+            )}
+            <div className="row-confirm-actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={rowBusy}
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn danger"
+                disabled={rowBusy}
+                onClick={handleDeleteConfirmed}
+              >
+                {rowBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Add-images upload modal (drag-drop). */}
+      {!isTauri() &&
+        isAdmin &&
+        uploadModalSite !== null &&
+        backendRef.current instanceof SupabaseStorageBackend && (
+          <UploadModal
+            backend={backendRef.current}
+            site={uploadModalSite}
+            existingNames={(imagesBySite.get(uploadModalSite) ?? []).map((x) =>
+              pathBasename(x.path),
+            )}
+            onClose={() => setUploadModalSite(null)}
+            onUploaded={() => {
+              const s = uploadModalSite;
+              refreshGallery();
+              if (s) expandSite(s);
+            }}
+          />
+        )}
     </main>
   );
 }

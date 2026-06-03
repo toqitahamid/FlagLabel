@@ -348,4 +348,243 @@ export class SupabaseStorageBackend implements StorageBackend {
       );
     }
   }
+
+  // ---- Admin destructive ops (delete / rename) ----
+  //
+  // All four are admin-only server-side: Storage remove/move and the
+  // sites/annotations DELETEs are gated by RLS. A non-admin's calls fail there
+  // regardless of the UI offering the affordance. Web-only — not on the shared
+  // `StorageBackend` interface (the desktop backend manages its own files).
+
+  // Deletes one image: the Storage object first, then its `annotations` row.
+  // Storage-then-row keeps the row from outliving its pixels (a dangling row
+  // would show a broken thumbnail); the row delete is the cheap, recoverable end.
+  async deleteImage(site: string, name: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { error: storageError } = await supabase.storage
+      .from(PHOTOS_BUCKET)
+      .remove([`${site}/${name}`]);
+    if (storageError) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteImage failed for "${site}/${name}": ${storageError.message}`,
+      );
+    }
+    const { error: rowError } = await supabase
+      .from("annotations")
+      .delete()
+      .eq("site", site)
+      .eq("image_name", name);
+    if (rowError) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteImage failed for "${site}/${name}": ${rowError.message}`,
+      );
+    }
+  }
+
+  // Deletes an entire folder: every image's Storage object (in chunks of 100, the
+  // Storage `remove` batch ceiling), then all its `annotations` rows, then the
+  // `sites` row (which may exist independently for an empty folder). An empty
+  // folder with no image rows is fine — the chunk loop simply does nothing.
+  async deleteSite(name: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { data, error: selectError } = await supabase
+      .from("annotations")
+      .select("storage_path")
+      .eq("site", name);
+    if (selectError) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteSite failed for "${name}": ${selectError.message}`,
+      );
+    }
+    const paths = (data ?? []).map((row) => row.storage_path as string);
+    for (let i = 0; i < paths.length; i += 100) {
+      const chunk = paths.slice(i, i + 100);
+      const { error: storageError } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .remove(chunk);
+      if (storageError) {
+        throw new Error(
+          `SupabaseStorageBackend.deleteSite failed for "${name}": ${storageError.message}`,
+        );
+      }
+    }
+    const { error: rowError } = await supabase
+      .from("annotations")
+      .delete()
+      .eq("site", name);
+    if (rowError) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteSite failed for "${name}": ${rowError.message}`,
+      );
+    }
+    const { error: siteError } = await supabase
+      .from("sites")
+      .delete()
+      .eq("name", name);
+    if (siteError) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteSite failed for "${name}": ${siteError.message}`,
+      );
+    }
+  }
+
+  // Renames one image within a folder. The Storage object key is immutable, so we
+  // MOVE it first (the admin gate) — this also keeps the object and row consistent
+  // if the row update later fails. Then the row's identity columns and, when
+  // present, the schema-v2 blob's `image` field are updated to match. `.select`
+  // detects a zero-row match (image not registered) rather than silently no-op'ing.
+  async renameImage(site: string, oldName: string, newName: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { error: moveError } = await supabase.storage
+      .from(PHOTOS_BUCKET)
+      .move(`${site}/${oldName}`, `${site}/${newName}`);
+    if (moveError) {
+      throw new Error(
+        `SupabaseStorageBackend.renameImage failed for "${site}/${oldName}": ${moveError.message}`,
+      );
+    }
+    const { data: existing, error: readError } = await supabase
+      .from("annotations")
+      .select("data")
+      .eq("site", site)
+      .eq("image_name", oldName)
+      .maybeSingle<{ data: AnnotationFile | null }>();
+    if (readError) {
+      throw new Error(
+        `SupabaseStorageBackend.renameImage failed for "${site}/${oldName}": ${readError.message}`,
+      );
+    }
+    const updatedData =
+      existing?.data != null
+        ? { ...existing.data, image: newName }
+        : null;
+    const updatePayload: Record<string, unknown> = {
+      image_name: newName,
+      storage_path: `${site}/${newName}`,
+      updated_at: new Date().toISOString(),
+    };
+    if (updatedData !== null) {
+      updatePayload.data = updatedData;
+    }
+    const { data: updated, error: updateError } = await supabase
+      .from("annotations")
+      .update(updatePayload)
+      .eq("site", site)
+      .eq("image_name", oldName)
+      .select("site");
+    if (updateError) {
+      throw new Error(
+        `SupabaseStorageBackend.renameImage failed for "${site}/${oldName}": ${updateError.message}`,
+      );
+    }
+    if (!updated || updated.length === 0) {
+      throw new Error(
+        `SupabaseStorageBackend.renameImage: no annotations row for "${site}/${oldName}".`,
+      );
+    }
+  }
+
+  // Renames a folder. Storage keys are immutable, so every image must be migrated
+  // object-by-object (move + row update), each independently consistent so a
+  // partial run is safely re-runnable. Per-image failures are collected, not
+  // thrown — a straggler leaves its row on the OLD side, and because a re-run's
+  // `.eq("site", oldName)` query no longer returns the already-migrated images,
+  // it only retries the stragglers. The `sites` row is flipped LAST and ONLY when
+  // every image succeeded, so the folder still resolves under the old name (and
+  // the op stays re-runnable) whenever anything failed. Concurrency cap 5, same
+  // worker-pool pattern as `uploadImagesToSite`.
+  async renameSite(
+    oldName: string,
+    newName: string,
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<{ renamed: number; failures: { name: string; error: string }[] }> {
+    const supabase = getSupabaseClient();
+    const { data: rows, error: selectError } = await supabase
+      .from("annotations")
+      .select("image_name, data")
+      .eq("site", oldName);
+    if (selectError) {
+      throw new Error(
+        `SupabaseStorageBackend.renameSite failed for "${oldName}": ${selectError.message}`,
+      );
+    }
+    const images = (rows ?? []) as { image_name: string; data: AnnotationFile | null }[];
+    const total = images.length;
+    const failures: { name: string; error: string }[] = [];
+    let done = 0;
+    let cursor = 0;
+    const CONCURRENCY = 5;
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = cursor++;
+        if (i >= images.length) return;
+        const { image_name: name, data } = images[i];
+        const from = `${oldName}/${name}`;
+        const to = `${newName}/${name}`;
+        const { error: moveError } = await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .move(from, to);
+        if (moveError) {
+          // The object may already be at `to` from a prior partial run — if so,
+          // proceed to the row update; otherwise record the failure and leave
+          // this image consistent on the old side.
+          const { data: listed } = await supabase.storage
+            .from(PHOTOS_BUCKET)
+            .list(newName, { limit: 1, search: name });
+          if (!listed?.length) {
+            failures.push({ name, error: moveError.message });
+            onProgress?.(++done, total);
+            continue;
+          }
+        }
+        const updatePayload: Record<string, unknown> = {
+          site: newName,
+          storage_path: to,
+          updated_at: new Date().toISOString(),
+        };
+        if (data != null) {
+          updatePayload.data = { ...data, site: newName };
+        }
+        const { error: updateError } = await supabase
+          .from("annotations")
+          .update(updatePayload)
+          .eq("site", oldName)
+          .eq("image_name", name);
+        if (updateError) {
+          failures.push({ name, error: updateError.message });
+        }
+        onProgress?.(++done, total);
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()),
+    );
+
+    // Flip the folder name LAST, and only on a fully clean migration. On any
+    // failure the old `sites` row stays so the folder keeps resolving and a
+    // re-run can finish the stragglers.
+    if (failures.length === 0) {
+      const { error: upsertError } = await supabase
+        .from("sites")
+        .upsert({ name: newName }, { onConflict: "name", ignoreDuplicates: true });
+      if (upsertError) {
+        throw new Error(
+          `SupabaseStorageBackend.renameSite failed for "${oldName}": ${upsertError.message}`,
+        );
+      }
+      const { error: deleteError } = await supabase
+        .from("sites")
+        .delete()
+        .eq("name", oldName);
+      if (deleteError) {
+        throw new Error(
+          `SupabaseStorageBackend.renameSite failed for "${oldName}": ${deleteError.message}`,
+        );
+      }
+    }
+
+    return { renamed: total - failures.length, failures };
+  }
 }

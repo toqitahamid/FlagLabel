@@ -1931,3 +1931,293 @@ canvas {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ============ Explorer: rename, context menu, delete confirm ============ */
+
+/* Inline rename input (folder or image row) — sits where the name was. */
+.rename-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: inherit;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  outline: none;
+}
+
+/* Right-click context menu */
+.row-ctx-menu {
+  position: fixed;
+  z-index: 50;
+  min-width: 172px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+}
+.row-ctx-label {
+  padding: 4px 9px 3px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-ctx-menu button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.row-ctx-menu button:hover {
+  background: var(--accent);
+  color: #052019;
+}
+.row-ctx-menu button.danger {
+  color: var(--danger-soft);
+}
+.row-ctx-menu button.danger:hover {
+  background: var(--danger);
+  color: #fff;
+}
+.row-ctx-menu button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.row-ctx-sep {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: 4px 2px;
+}
+
+/* Delete confirm popover */
+.row-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+.row-confirm {
+  position: fixed;
+  z-index: 60;
+  width: 250px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.row-confirm-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.row-confirm-sub {
+  margin: 0 0 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.5;
+}
+.row-confirm-error {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--danger-soft);
+}
+.row-confirm-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* Shared danger button (confirm + modal) */
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+  font-weight: 600;
+}
+.btn.danger:hover {
+  background: #cf2020;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ============ Add-images upload modal ============ */
+.upload-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.upload-modal {
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.upload-modal-head {
+  padding: 16px 18px 10px;
+}
+.upload-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.upload-modal-sub {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+.upload-modal-sub b {
+  color: var(--accent);
+}
+.upload-modal-body {
+  padding: 0 18px;
+  overflow-y: auto;
+}
+.upload-dropzone {
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+.upload-dropzone:hover {
+  border-color: var(--accent);
+  color: var(--text-secondary);
+}
+.upload-dropzone.drag {
+  border-color: var(--accent);
+  background: rgba(52, 163, 130, 0.08);
+  color: var(--text-primary);
+}
+.upload-dropzone svg {
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+.upload-browse {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.upload-filelist {
+  margin: 14px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.upload-filelist-head {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+.upload-dup-note {
+  font-size: 11px;
+  color: var(--warning);
+  margin-bottom: 6px;
+}
+.upload-filerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+.upload-filerow:hover {
+  background: var(--bg-elevated);
+}
+.upload-thumb {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-zoom);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+.upload-fmeta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.upload-fname {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.upload-fsize {
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+.upload-fdup {
+  color: var(--warning);
+}
+.upload-fremove {
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+.upload-fremove:hover {
+  background: var(--border-subtle);
+  color: var(--text-primary);
+}
+.upload-status {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.upload-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 12px;
+}
+.upload-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.upload-actions {
+  display: flex;
+  gap: 8px;
+}
