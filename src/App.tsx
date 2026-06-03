@@ -376,6 +376,76 @@ function AnnotationGuide() {
   );
 }
 
+// Three transect sampling lines — Left, Center, Right — fanning out from the
+// camera, each in its data color (red / amber / blue). Keys 1 / 2 / 3 select
+// them, and the chosen transect's color tags every annotation. Same
+// suppress-under-reduced-motion behavior as AnnotationGuide.
+function TransectGuide() {
+  return (
+    <svg
+      className="transect-guide"
+      viewBox="0 0 220 150"
+      role="img"
+      aria-label="Three sampling lines fanning out from the camera: Left in red, Center in amber, Right in blue. Keys 1, 2, 3 select them, and the chosen transect's color tags every annotation."
+    >
+      {/* camera viewpoint */}
+      <path className="tg-camera" d="M104 141 L116 141 L110 132 Z" />
+
+      <g className="tg-anno tg-anno--l">
+        <line x1="110" y1="135" x2="52" y2="30" />
+        <circle cx="84" cy="89" r="2.6" />
+        <circle cx="65" cy="54" r="2.6" />
+        <text x="47" y="24" textAnchor="middle">
+          L
+        </text>
+      </g>
+      <g className="tg-anno tg-anno--c">
+        <line x1="110" y1="135" x2="110" y2="26" />
+        <circle cx="110" cy="88" r="2.6" />
+        <circle cx="110" cy="50" r="2.6" />
+        <text x="110" y="18" textAnchor="middle">
+          C
+        </text>
+      </g>
+      <g className="tg-anno tg-anno--r">
+        <line x1="110" y1="135" x2="168" y2="30" />
+        <circle cx="136" cy="89" r="2.6" />
+        <circle cx="155" cy="54" r="2.6" />
+        <text x="173" y="24" textAnchor="middle">
+          R
+        </text>
+      </g>
+    </svg>
+  );
+}
+
+// The two onboarding schematics side by side: which line (transect) and what to
+// mark (tool). Shared by the empty-state intro and the keyboard-help overlay.
+function GuideFigures() {
+  return (
+    <div className="intro-figures">
+      <figure className="intro-figure">
+        <TransectGuide />
+        <figcaption className="intro-figcaption">
+          <b>Transect</b> — which line. <kbd>1</kbd>{" "}
+          <span className="t-l">L</span> · <kbd>2</kbd>{" "}
+          <span className="t-c">C</span> · <kbd>3</kbd>{" "}
+          <span className="t-r">R</span>. Its color tags every mark.
+        </figcaption>
+      </figure>
+      <figure className="intro-figure">
+        <AnnotationGuide />
+        <figcaption className="intro-figcaption">
+          <b>Tool</b> — what to mark. <kbd>Q</kbd>
+          <kbd>W</kbd>
+          <kbd>E</kbd>
+          <kbd>R</kbd>
+        </figcaption>
+      </figure>
+    </div>
+  );
+}
+
 function KeyboardHelp({
   onClose,
   appVersion,
@@ -414,7 +484,7 @@ function KeyboardHelp({
         </p>
 
         <div className="help-guide">
-          <AnnotationGuide />
+          <GuideFigures />
         </div>
 
         <div className="help-grid">
@@ -2278,10 +2348,10 @@ function App() {
           ) : (
             <div className="state-center">
               <div className="intro">
-                <AnnotationGuide />
                 <p className="state-tagline">
                   Mark wire–ground points and flag spans to calibrate distance.
                 </p>
+                <GuideFigures />
                 <ul className="intro-tools" aria-label="Annotation tools">
                   <li className="intro-tool">
                     <kbd>Q</kbd>
@@ -2309,9 +2379,7 @@ function App() {
                   </li>
                 </ul>
                 <p className="intro-flow">
-                  Set the transect <kbd>1</kbd>
-                  <kbd>2</kbd>
-                  <kbd>3</kbd> and distance <kbd>↑</kbd>
+                  Set the distance <kbd>↑</kbd>
                   <kbd>↓</kbd>, then click to place.
                 </p>
                 <div className="state-buttons">

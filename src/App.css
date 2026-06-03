@@ -1062,8 +1062,8 @@ canvas {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 22px;
-  max-width: 440px;
+  gap: 20px;
+  max-width: 500px;
 }
 
 .intro .state-tagline {
@@ -1197,14 +1197,127 @@ canvas {
   margin: 0 1px;
 }
 
-/* The schematic in the help overlay, centered above the shortcut grid. */
+/* Transect schematic: three sampling lines in their data colors. Each line
+   rests readable (the reduced-motion state) and the pulse rolls a brightness
+   highlight through L -> C -> R, each staying its own color. */
+.transect-guide {
+  display: block;
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+}
+
+.tg-camera {
+  fill: var(--text-tertiary);
+}
+
+.tg-anno {
+  opacity: 0.9;
+}
+
+.tg-anno line {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  fill: none;
+  stroke-dasharray: 3 3;
+  stroke-linecap: round;
+}
+
+.tg-anno circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.tg-anno text {
+  fill: currentColor;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Transect data colors (mirror TRANSECT_COLORS in App.tsx). */
+.tg-anno--l {
+  color: #ff4d4d;
+  animation: tg-pulse 5.4s linear infinite;
+}
+.tg-anno--c {
+  color: #ffd93d;
+  animation: tg-pulse 5.4s linear infinite 1.8s;
+}
+.tg-anno--r {
+  color: #4da6ff;
+  animation: tg-pulse 5.4s linear infinite 3.6s;
+}
+
+@keyframes tg-pulse {
+  0%,
+  30%,
+  100% {
+    opacity: 0.4;
+  }
+  6%,
+  20% {
+    opacity: 1;
+  }
+}
+
+.t-l {
+  color: #ff4d4d;
+  font-weight: 700;
+}
+.t-c {
+  color: #ffd93d;
+  font-weight: 700;
+}
+.t-r {
+  color: #4da6ff;
+  font-weight: 700;
+}
+
+/* The two schematics side by side, each captioned. */
+.intro-figures {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 24px;
+  width: 100%;
+}
+
+.intro-figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 210px;
+}
+
+.intro-figcaption {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.intro-figcaption b {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* Both schematics live here in the help overlay, centered above the grid. */
 .help-guide {
   display: flex;
   justify-content: center;
   margin: 0 0 18px;
 }
 
+.help-guide .intro-figures {
+  gap: 36px;
+}
+
 .intro kbd,
+.intro-figcaption kbd,
 .canvas-hint kbd {
   font-family: var(--font-mono);
   font-size: 11px;
