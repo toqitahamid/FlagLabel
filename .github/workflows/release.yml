@@ -2,12 +2,62 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "package.json"
+      - "src-tauri/tauri.conf.json"
+      - "src-tauri/Cargo.toml"
   workflow_dispatch:
 
+# Don't let two pushes race to create the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  # Decide whether this push is a genuine version bump that needs a release.
+  # Reads the version from package.json, verifies the three version files agree,
+  # and skips if a release for that version already exists (draft or published).
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read and verify version
+        id: version
+        shell: bash
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ "$PKG" != "$CONF" ] || [ "$PKG" != "$CARGO" ]; then
+            echo "::error::Version mismatch — package.json=$PKG tauri.conf.json=$CONF Cargo.toml=$CARGO. All three must match."
+            exit 1
+          fi
+          echo "version=$PKG" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists; nothing to do."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version v$VERSION has no release yet; will build."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
     permissions:
       contents: write
     strategy:
@@ -40,11 +90,11 @@ jobs:
 
       - run: npm ci
 
-      - name: Extract release notes for ${{ github.ref_name }}
+      - name: Extract release notes for v${{ needs.check.outputs.version }}
         id: notes
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.check.outputs.version }}"
           # Pull the section between "## v$VERSION" and the next "## v" heading.
           BODY=$(awk -v ver="## v$VERSION" '
             $0 == ver { found=1; next }
@@ -66,9 +116,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "FlagLabel ${{ github.ref_name }}"
+          tagName: v${{ needs.check.outputs.version }}
+          releaseName: "FlagLabel v${{ needs.check.outputs.version }}"
           releaseBody: ${{ steps.notes.outputs.body }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
