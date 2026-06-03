@@ -2155,7 +2155,7 @@ function App() {
             <div className="rail-section rail-pinned">
               <div className="rail-label">
                 <span>Zoom radius</span>
-                <span className="key-hint">[ ]</span>
+                <span className="key-hint">[ · ]</span>
               </div>
               <div className="slider-row">
                 <input
@@ -2229,7 +2229,7 @@ function App() {
               <div className="rail-section">
                 <div className="rail-label">
                   <span>Distance</span>
-                  <span className="key-hint">↑ ↓</span>
+                  <span className="key-hint">↑ · ↓</span>
                 </div>
                 <div className="distance-row">
                   <input
@@ -2253,7 +2253,7 @@ function App() {
                     onChange={(e) => setAutoAdvance(e.currentTarget.checked)}
                   />
                   <span>Auto-advance 1→15</span>
-                  <span className="key-hint">a</span>
+                  <span className="key-hint">A</span>
                 </label>
                 <DistanceSparkline clicks={clicks} />
               </div>

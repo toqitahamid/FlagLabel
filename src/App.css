@@ -879,6 +879,11 @@ body,
   color: var(--text-tertiary);
 }
 
+/* The leading label (WG) shouldn't indent line 1 relative to line 2's L. */
+.counts-line .lbl:first-child {
+  margin-left: 0;
+}
+
 .canvas-container {
   position: relative;
   background: var(--bg-app);
