@@ -1,6 +1,6 @@
 [package]
 name = "flaglabel"
-version = "0.1.3"
+version = "0.2.0"
 description = "Keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys."
 authors = ["Toqi Tahamid Sarker"]
 edition = "2021"
