@@ -102,6 +102,29 @@ export class SupabaseStorageBackend implements StorageBackend {
     }));
   }
 
+  // Bulk export (#18): fetch every saved annotation blob for a ZIP download.
+  // Selects only rows whose `data` is non-null (images never saved are simply
+  // absent — correct). Returns the raw schema-v2 `data` objects (they ARE
+  // AnnotationFiles); the export builder canonicalizes them for byte-identical
+  // output. SELECT is open to all authenticated users by RLS. Web-only — not on
+  // the shared `StorageBackend` interface (the desktop backend has no shared
+  // dataset), exactly like `listImagesWithProgress`.
+  async listAnnotationFiles(): Promise<AnnotationFile[]> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("site, image_name, data")
+      .not("data", "is", null)
+      .order("site", { ascending: true })
+      .order("image_name", { ascending: true });
+    if (error) {
+      throw new Error(
+        `SupabaseStorageBackend.listAnnotationFiles failed: ${error.message}`,
+      );
+    }
+    return (data ?? []).map((row) => row.data as AnnotationFile);
+  }
+
   // Admin-only ingest (#14): upload one camera folder's image files to Storage
   // under `<site>/<name>` and seed/refresh a row per file. `site` is derived from
   // each file's `webkitRelativePath` (the immediate parent folder = the camera).

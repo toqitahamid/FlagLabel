@@ -38,6 +38,12 @@ import { findCollision } from "./annotations/collision";
 import { TauriStorageBackend } from "./cloud/tauri-backend";
 import { SupabaseStorageBackend, fetchIsAdmin } from "./cloud/supabase-backend";
 import {
+  serializeAnnotationFile,
+  canonicalizeAnnotationFile,
+  buildZipEntries,
+  exportEntryName,
+} from "./cloud/export";
+import {
   deriveSummary,
   summarizeProgress,
   isAnnotated,
@@ -1289,6 +1295,76 @@ function App() {
     }
   }, [image, clicks, clicksDir, appVersion, dirty, canEdit]);
 
+  // ─── Web-only export (#18) ──────────────────────────────────────────────────
+  // The desktop app writes JSON straight to local disk, so export is web-only.
+  // Output bytes are byte-identical to desktop via the shared `src/cloud/export`
+  // pure builder. Both handlers are no-ops on Tauri (the UI is `!isTauri()`-gated
+  // too) and are wrapped in browser-only Blob/anchor IO that desktop never hits.
+
+  // Trigger a browser download of `blob` named `filename` via a temporary anchor.
+  const triggerDownload = useCallback((filename: string, blob: Blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Revoke on the next tick so the click has been dispatched.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, []);
+
+  // Download the CURRENT image's annotation JSON as `<site>__<stem>.json`.
+  // Prefer the persisted blob (so the download matches exactly what's stored);
+  // fall back to building from the in-memory clicks if the row has no data yet.
+  const handleDownloadCurrent = useCallback(async () => {
+    if (isTauri() || !image) return;
+    try {
+      const item = itemFromPath(image.path);
+      const stored = await backendRef.current.readAnnotationFile(item);
+      const file = stored
+        ? canonicalizeAnnotationFile(stored)
+        : buildAnnotationFile(
+            {
+              site: siteFromPath(image.path),
+              image: pathBasename(image.path),
+              image_w: image.width,
+              image_h: image.height,
+            },
+            clicks,
+            appVersion,
+            new Date().toISOString(),
+          );
+      triggerDownload(
+        exportEntryName(file),
+        new Blob([serializeAnnotationFile(file)], { type: "application/json" }),
+      );
+    } catch (e) {
+      console.error("Download failed", e);
+    }
+  }, [image, clicks, appVersion, triggerDownload]);
+
+  // Admin-only: download the WHOLE dataset's annotations as one ZIP of per-image
+  // JSON files. Fetches every row with non-null `data`, builds canonical entries,
+  // and zips them. JSZip is imported dynamically so it stays out of the desktop
+  // chunk and only loads when an admin actually exports.
+  const handleDownloadAll = useCallback(async () => {
+    if (isTauri()) return;
+    const backend = backendRef.current;
+    if (!(backend instanceof SupabaseStorageBackend)) return;
+    try {
+      const files = await backend.listAnnotationFiles();
+      const entries = buildZipEntries(files);
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      for (const entry of entries) zip.file(entry.name, entry.content);
+      const blob = await zip.generateAsync({ type: "blob" });
+      triggerDownload("flaglabel-annotations.zip", blob);
+    } catch (e) {
+      console.error("Bulk export failed", e);
+    }
+  }, [triggerDownload]);
+
   const navigateBy = useCallback(
     async (delta: number) => {
       if (folderImages.length === 0 || !image) return;
@@ -2457,6 +2533,18 @@ function App() {
             >
               Save
             </button>
+            {!isTauri() && (
+              <>
+                <span className="title-divider" aria-hidden />
+                <button
+                  className="title-btn"
+                  onClick={handleDownloadCurrent}
+                  title="Download this image's annotation JSON"
+                >
+                  Download JSON
+                </button>
+              </>
+            )}
             <span className="title-divider" aria-hidden />
             <button
               className="title-btn"
@@ -2524,6 +2612,16 @@ function App() {
                   onClick={() => setShowUpload(true)}
                 >
                   Upload images
+                </button>
+              )}
+              {!isTauri() && isAdmin && (
+                <button
+                  type="button"
+                  className="btn upload-trigger"
+                  onClick={handleDownloadAll}
+                  title="Download all annotations as a ZIP of per-image JSON files"
+                >
+                  Download all (ZIP)
                 </button>
               )}
             </div>

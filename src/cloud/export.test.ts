@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { serializeAnnotationFile, exportEntryName, buildZipEntries } from "./export";
+import {
+  serializeAnnotationFile,
+  exportEntryName,
+  buildZipEntries,
+  canonicalizeAnnotationFile,
+} from "./export";
 import {
   buildAnnotationFile,
   parseAnnotationFile,
@@ -137,6 +142,46 @@ describe("empty annotation files", () => {
     const entries = buildZipEntries([emptyFile]);
     expect(entries).toHaveLength(1);
     expect(entries[0].name).toBe("camEmpty__shot.json");
+  });
+});
+
+// ─── canonicalizeAnnotationFile (jsonb key-order fix, #18) ───────────────────
+
+describe("canonicalizeAnnotationFile", () => {
+  it("a key-shuffled stored object serializes byte-identical to the desktop file", () => {
+    // What buildAnnotationFile (desktop / save path) produces.
+    const desktop = buildAnnotationFile(META, ANNS, "0.2.1", "2026-06-03T00:00:00.000Z");
+
+    // Simulate Postgres jsonb returning the same content with reordered keys
+    // (jsonb does not preserve insertion/desktop key order). The values are
+    // identical; only the top-level key order differs.
+    const shuffled: Record<string, unknown> = {};
+    for (const key of Object.keys(desktop).reverse()) {
+      shuffled[key] = (desktop as Record<string, unknown>)[key];
+    }
+    expect(Object.keys(shuffled)).not.toEqual(Object.keys(desktop));
+
+    const canonical = canonicalizeAnnotationFile(shuffled as typeof desktop);
+    // Byte-identical to the desktop output (acceptance criterion #1).
+    expect(serializeAnnotationFile(canonical)).toBe(serializeAnnotationFile(desktop));
+  });
+
+  it("preserves the original created_at and app_version (not a fresh stamp)", () => {
+    const stored = buildAnnotationFile(META, ANNS, "0.1.7", "2024-01-01T09:30:00.000Z");
+    const canonical = canonicalizeAnnotationFile(stored);
+    expect(canonical.created_at).toBe("2024-01-01T09:30:00.000Z");
+    expect(canonical.app_version).toBe("0.1.7");
+  });
+
+  it("buildZipEntries canonicalizes content even from key-shuffled input", () => {
+    const desktop = buildAnnotationFile(META, ANNS, "0.2.1", "2026-06-03T00:00:00.000Z");
+    const shuffled: Record<string, unknown> = {};
+    for (const key of Object.keys(desktop).reverse()) {
+      shuffled[key] = (desktop as Record<string, unknown>)[key];
+    }
+    const entries = buildZipEntries([shuffled as typeof desktop]);
+    expect(entries[0].content).toBe(serializeAnnotationFile(desktop));
+    expect(entries[0].name).toBe("cam02__IMG_0001.json");
   });
 });
 
