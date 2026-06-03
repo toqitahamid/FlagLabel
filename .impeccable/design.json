@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-06-03T00:00:00.000Z",
+  "title": "Design System: FlagLabel",
+  "extensions": {
+    "colorMeta": {
+      "surveyor-green": {
+        "role": "primary",
+        "displayName": "Surveyor's Green",
+        "canonical": "oklch(64% 0.092 167)",
+        "tonalRamp": [
+          "oklch(16% 0.04 167)",
+          "oklch(26% 0.06 167)",
+          "oklch(36% 0.08 167)",
+          "oklch(46% 0.092 167)",
+          "oklch(56% 0.092 167)",
+          "oklch(64% 0.092 167)",
+          "oklch(78% 0.07 167)",
+          "oklch(92% 0.04 167)"
+        ]
+      },
+      "graphite-app": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "canonical": "oklch(15% 0.003 286)",
+        "tonalRamp": [
+          "#08080a",
+          "#0c0c0d",
+          "#18181b",
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa"
+        ]
+      },
+      "ink-primary": {
+        "role": "neutral",
+        "displayName": "Ink White",
+        "canonical": "oklch(98% 0 0)",
+        "tonalRamp": [
+          "#27272a",
+          "#3f3f46",
+          "#52525b",
+          "#71717a",
+          "#a1a1aa",
+          "#d4d4d8",
+          "#e4e4e7",
+          "#fafafa"
+        ]
+      },
+      "transect-left": {
+        "role": "tertiary",
+        "displayName": "Marker Red",
+        "canonical": "oklch(66% 0.2 25)",
+        "tonalRamp": []
+      },
+      "transect-center": {
+        "role": "tertiary",
+        "displayName": "Marker Amber",
+        "canonical": "oklch(86% 0.16 92)",
+        "tonalRamp": []
+      },
+      "transect-right": {
+        "role": "tertiary",
+        "displayName": "Marker Blue",
+        "canonical": "oklch(70% 0.14 252)",
+        "tonalRamp": []
+      }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "Modal titles. The largest type in the app; there is no display tier." },
+      "body": { "displayName": "Body", "purpose": "Default UI text, button labels, empty-state and intro copy." },
+      "label": { "displayName": "Label", "purpose": "Rail section labels, title-bar buttons, checkbox rows. Often lowercase." },
+      "mono": { "displayName": "Mono / Data", "purpose": "Every number and path: distances, counts, file paths, filenames. The defining texture." }
+    },
+    "shadows": [
+      {
+        "name": "modal-lift",
+        "value": "0 1px 0 rgba(255,255,255,0.03) inset, 0 12px 24px rgba(0,0,0,0.35), 0 24px 60px rgba(0,0,0,0.45)",
+        "purpose": "The only large shadow. Modals floating over the blurred backdrop."
+      },
+      {
+        "name": "thumb-lift",
+        "value": "0 1px 2px rgba(0,0,0,0.4)",
+        "purpose": "Slider thumb at rest; deepens with a faint focus halo on hover."
+      }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Default exponential ease-out for modals and reveals." },
+      { "name": "transition-fast", "value": "80ms", "purpose": "Hover/active color shifts on controls." },
+      { "name": "transition-base", "value": "140ms", "purpose": "Slightly slower state transitions (thumb, glow)." }
+    ],
+    "focusRing": "0 0 0 2px var(--graphite-app, #0c0c0d), 0 0 0 4px var(--surveyor-green, #34a382)",
+    "breakpoints": [
+      { "name": "modal-stack", "value": "580px", "note": "Keyboard-help grid collapses from two columns to one." }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The Save / open-folder call to action. The only place a filled green button appears.",
+      "html": "<button class=\"ds-btn-primary\">Save</button>",
+      "css": ".ds-btn-primary { font: 500 13px/1.4 Geist, -apple-system, sans-serif; padding: 8px 16px; border-radius: 6px; border: 1px solid #34a382; background: #34a382; color: #0c0c0d; cursor: pointer; transition: background-color 80ms ease, border-color 80ms ease, transform 80ms ease; } .ds-btn-primary:hover { background: #3eb691; border-color: #3eb691; } .ds-btn-primary:active { transform: scale(0.98); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 2px #0c0c0d, 0 0 0 4px #34a382; }"
+    },
+    {
+      "name": "Default Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Neutral action button. Graphite-elevated at rest, lifts on hover.",
+      "html": "<button class=\"ds-btn\">Open image</button>",
+      "css": ".ds-btn { font: 400 13px/1.4 Geist, -apple-system, sans-serif; padding: 8px 16px; border-radius: 6px; border: 1px solid #3f3f46; background: #27272a; color: #fafafa; cursor: pointer; transition: background-color 80ms ease, border-color 80ms ease, transform 80ms ease; } .ds-btn:hover { background: #18181b; border-color: #52525b; } .ds-btn:active { transform: scale(0.98); } .ds-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px #0c0c0d, 0 0 0 4px #34a382; }"
+    },
+    {
+      "name": "Transect Segment (active)",
+      "kind": "chip",
+      "refersTo": "segmented-btn",
+      "description": "One cell of the L/C/R segmented control. Active state fills with the transect's own data color (shown: Center / amber).",
+      "html": "<div class=\"ds-segmented\"><button class=\"ds-seg\">L</button><button class=\"ds-seg ds-seg-active-c\">C</button><button class=\"ds-seg\">R</button></div>",
+      "css": ".ds-segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; } .ds-seg { font: 600 14px/1 'Geist Mono', monospace; padding: 8px 0; border-radius: 4px; border: 1px solid #3f3f46; background: #27272a; color: #a1a1aa; cursor: pointer; transition: background-color 80ms ease, color 80ms ease, border-color 80ms ease; } .ds-seg:hover { border-color: #52525b; color: #fafafa; } .ds-seg:active { transform: scale(0.98); } .ds-seg-active-c { background: #FFD93D; border-color: #FFD93D; color: #0c0c0d; font-weight: 700; }"
+    },
+    {
+      "name": "Tool Button (active)",
+      "kind": "chip",
+      "refersTo": "segmented-btn-tool-active",
+      "description": "A cell of the 2x2 annotation-tool grid. Active fills with Ink-White inverse, deliberately distinct from transect colors.",
+      "html": "<div class=\"ds-tool-grid\"><button class=\"ds-tool ds-tool-active\">wire-ground</button><button class=\"ds-tool\">vertical</button></div>",
+      "css": ".ds-tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; } .ds-tool { font: 500 12px/1.2 Geist, -apple-system, sans-serif; padding: 8px 0; border-radius: 4px; border: 1px solid #3f3f46; background: #27272a; color: #a1a1aa; cursor: pointer; transition: background-color 80ms ease, color 80ms ease, border-color 80ms ease; } .ds-tool:hover { border-color: #52525b; color: #fafafa; } .ds-tool-active, .ds-tool-active:hover { background: #fafafa; border-color: #fafafa; color: #0c0c0d; font-weight: 600; }"
+    },
+    {
+      "name": "Distance Input",
+      "kind": "input",
+      "refersTo": "distance-input",
+      "description": "Monospace numeric distance field. Green border + soft glow on focus.",
+      "html": "<input class=\"ds-distance\" type=\"text\" value=\"1.0\" aria-label=\"Distance in meters\" />",
+      "css": ".ds-distance { font: 400 13px/1.4 'Geist Mono', monospace; font-variant-numeric: tabular-nums; width: 80px; padding: 6px 8px; border-radius: 4px; border: 1px solid #3f3f46; background: #27272a; color: #fafafa; outline: none; transition: border-color 80ms ease, box-shadow 140ms ease; } .ds-distance:hover { border-color: #52525b; } .ds-distance:focus-visible { border-color: #34a382; box-shadow: 0 0 0 2px rgba(52,163,130,0.25); }"
+    },
+    {
+      "name": "Auto-advance Checkbox",
+      "kind": "input",
+      "refersTo": "checkbox",
+      "description": "Custom checkbox. Graphite-elevated at rest; checked fills Surveyor's Green with a graphite checkmark.",
+      "html": "<label class=\"ds-check-row\"><input class=\"ds-check\" type=\"checkbox\" checked /><span>auto-advance</span></label>",
+      "css": ".ds-check-row { display: flex; align-items: center; gap: 8px; font: 400 12px/1.3 Geist, -apple-system, sans-serif; color: #a1a1aa; cursor: pointer; } .ds-check { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border: 1px solid #52525b; border-radius: 3px; background: #27272a; position: relative; cursor: pointer; transition: background-color 80ms ease, border-color 80ms ease; } .ds-check:checked { background: #34a382; border-color: #34a382; } .ds-check:checked::after { content: ''; position: absolute; left: 3px; top: 0; width: 4px; height: 8px; border: solid #0c0c0d; border-width: 0 2px 2px 0; transform: rotate(45deg); } .ds-check:focus-visible { outline: none; box-shadow: 0 0 0 2px #18181b, 0 0 0 4px #34a382; }"
+    },
+    {
+      "name": "Folder List Item (active)",
+      "kind": "nav",
+      "refersTo": "image-item",
+      "description": "One row of the folder sidebar. Active row gets a graphite-elevated fill and a 2px Surveyor's-Green left border, the one sanctioned left-accent.",
+      "html": "<ul class=\"ds-image-list\"><li class=\"ds-image-item ds-image-active\"><span class=\"ds-name\">IMG_0421.JPG</span><span class=\"ds-counts\">3</span></li><li class=\"ds-image-item ds-untouched\"><span class=\"ds-name\">IMG_0422.JPG</span><span class=\"ds-counts\">0</span></li></ul>",
+      "css": ".ds-image-list { list-style: none; margin: 0; padding: 4px 0; background: #18181b; } .ds-image-item { display: flex; align-items: baseline; gap: 8px; padding: 6px 14px; font: 400 11px/1.4 'Geist Mono', monospace; color: #a1a1aa; cursor: pointer; border-left: 2px solid transparent; transition: background-color 60ms ease, color 60ms ease; } .ds-image-item:hover { background: #27272a; color: #fafafa; } .ds-image-active { background: #27272a; color: #fafafa; border-left-color: #34a382; } .ds-untouched { color: #71717a; } .ds-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-counts { flex-shrink: 0; font-size: 10px; font-variant-numeric: tabular-nums; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Surveyor's Instrument",
+    "overview": "FlagLabel is a calibrated dark field tool, not a workspace. The whole interface is built to read like surveying gear: a near-black graphite housing, a single green that lights only the controls that matter, white data set in tabular monospace, and three saturated transect colors borrowed straight from the field markers. Every pixel earns its place by serving one job, landing an annotation exactly where the researcher means it, thousands of times, from the keyboard. Density is high but never loud; depth comes from tonal layering of the graphite ramp, not from decoration, and shadows appear only when something genuinely floats above the canvas. The accent green is rationed: primary action, current selection, saved state. Nowhere else.",
+    "keyCharacteristics": [
+      "Dark graphite housing (#0c0c0d) with tonal layering for depth, not shadow.",
+      "One rationed accent: Surveyor's Green (#34a382) for action, selection, saved.",
+      "Monospace, tabular-aligned data everywhere a number lives.",
+      "Three field-marker data colors (red/amber/blue) for L/C/R transects only.",
+      "Small radii (4-8px), fast transitions (80-140ms), nothing rounded or slow.",
+      "Keyboard-first: every control has a visible :focus-visible ring."
+    ],
+    "rules": [
+      { "name": "The Rationed Green Rule", "body": "Surveyor's Green appears only on action, current selection, and saved/checked state. If green is doing decoration, it is wrong.", "section": "colors" },
+      { "name": "The Data-Color Lockbox Rule", "body": "Red/Amber/Blue exist only to mean L/C/R. Never use a transect color for a button, a border, or emphasis. Their job is identity.", "section": "colors" },
+      { "name": "The Tabular Numerals Rule", "body": "Every numeric readout uses Geist Mono with font-variant-numeric: tabular-nums. Counts, distances, and coordinates must never reflow horizontally as their digits change.", "section": "typography" },
+      { "name": "The Tonal-Depth Rule", "body": "Panels and controls are flat at rest. To raise an element, step it up the graphite ramp and strengthen its border; do not add a drop shadow. Shadows mean floating over the photo, and only modals do that.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do ration Surveyor's Green to action, current selection, and saved/checked state only.",
+      "Do set every number in Geist Mono with tabular-nums so readouts never reflow as digits change.",
+      "Do convey depth by stepping up the graphite ramp (app -> surface -> elevated) and strengthening the border.",
+      "Do keep radii small: 4px on compact controls, 6px on standard buttons, 8px on modals.",
+      "Do give every interactive control a visible :focus-visible ring and a hover state.",
+      "Do keep the transect colors (red #FF4D4D / amber #FFD93D / blue #4DA6FF) exclusively for L/C/R identity."
+    ],
+    "donts": [
+      "Don't look like a consumer photo app: no broad gradient toolbars, no playful chrome.",
+      "Don't look like a generic SaaS dashboard: no card grids, no hero-metric blocks, no tracked-uppercase eyebrow over every panel.",
+      "Don't look like academic clunkware: no mismatched controls, no half-built states.",
+      "Don't build for touch: no oversized tap targets, bottom sheets, or swipe gestures.",
+      "Don't use a transect data color for a button, border, or emphasis.",
+      "Don't add a border-left greater than the one 2px Surveyor's-Green active-item marker.",
+      "Don't introduce gradient text, glassmorphism panels, or border-radius above 8px on any control.",
+      "Don't reach for a modal first; only keyboard-help and the collision confirm earn an overlay."
+    ]
+  }
+}
