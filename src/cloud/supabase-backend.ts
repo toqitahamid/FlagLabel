@@ -2,6 +2,7 @@ import type { AnnotationFile } from "../annotations/schema";
 import { getSupabaseClient } from "./supabase-client";
 import type { ImageItem, StorageBackend } from "./storage-backend";
 import { uploadTargetFromRelativePath } from "./upload-identity";
+import { uploadTargetForSite } from "./site-upload";
 import { deriveSummary } from "./summary";
 
 // Web (cloud) backend: persists to the Supabase `annotations` table and resolves
@@ -169,6 +170,106 @@ export class SupabaseStorageBackend implements StorageBackend {
       }
       onProgress?.(++done, files.length);
     }
+    return result;
+  }
+
+  // ---- Explorer-style folders (sites) ----
+  //
+  // The admin names a folder in the UI and adds images to it, instead of
+  // deriving the folder from an OS directory. Empty folders are persisted in the
+  // `sites` table so they survive a reload before any image exists; non-empty
+  // folders ALSO appear implicitly via their `annotations` rows. The gallery
+  // therefore renders the UNION of `listSites()` and the distinct sites in the
+  // image rows (computed in App.tsx). All three calls below are admin-gated by
+  // RLS server-side; a non-admin's writes fail there regardless of the UI.
+
+  // The persisted (possibly-empty) folder names, sorted.
+  async listSites(): Promise<string[]> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("sites")
+      .select("name")
+      .order("name", { ascending: true });
+    if (error) {
+      throw new Error(`SupabaseStorageBackend.listSites failed: ${error.message}`);
+    }
+    return (data ?? []).map((row) => row.name as string);
+  }
+
+  // Registers an empty folder. Idempotent: creating a name that already exists
+  // (e.g. one that already has images) is a harmless no-op, not an error, so the
+  // UI never has to special-case "folder already there".
+  async createSite(name: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    const { error } = await supabase
+      .from("sites")
+      .upsert({ name }, { onConflict: "name", ignoreDuplicates: true });
+    if (error) {
+      throw new Error(`SupabaseStorageBackend.createSite failed: ${error.message}`);
+    }
+  }
+
+  // Uploads individual image files INTO an existing folder. `site` is the
+  // already-validated folder name; each file's basename becomes the image name.
+  // Uploads run with a small concurrency cap (camera folders can be hundreds of
+  // images, and one-at-a-time is needlessly slow) while preserving the same
+  // per-file accounting and the storage+row contract as `uploadFolder`:
+  //   - non-image files are skipped,
+  //   - the Storage object is upserted at `<site>/<name>` (re-adding replaces the
+  //     pixels), and
+  //   - the `annotations` row upsert sends ONLY identity columns so an existing
+  //     image's `data` jsonb is never clobbered by a re-upload.
+  async uploadImagesToSite(
+    site: string,
+    files: File[],
+    onProgress?: (done: number, total: number) => void,
+  ): Promise<UploadResult> {
+    const supabase = getSupabaseClient();
+    const result: UploadResult = { uploaded: 0, skipped: 0, failed: [] };
+    const total = files.length;
+    let done = 0;
+    let cursor = 0;
+    const CONCURRENCY = 5;
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const i = cursor++;
+        if (i >= files.length) return;
+        const file = files[i];
+        const target = uploadTargetForSite(site, file.name);
+        if (!target) {
+          result.skipped += 1;
+          onProgress?.(++done, total);
+          continue;
+        }
+        try {
+          const up = await supabase.storage
+            .from(PHOTOS_BUCKET)
+            .upload(target.storagePath, file, { upsert: true });
+          if (up.error) throw up.error;
+          const { error: rowError } = await supabase.from("annotations").upsert(
+            {
+              site: target.site,
+              image_name: target.name,
+              storage_path: target.storagePath,
+            },
+            { onConflict: "site,image_name" },
+          );
+          if (rowError) throw rowError;
+          result.uploaded += 1;
+        } catch (e) {
+          result.failed.push({
+            name: target.storagePath,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+        onProgress?.(++done, total);
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, total) }, () => worker()),
+    );
     return result;
   }
 

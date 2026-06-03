@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Menu,
@@ -51,7 +51,7 @@ import {
 } from "./cloud/summary";
 import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
-import { UploadScreen } from "./cloud/UploadScreen";
+import { validateSiteName } from "./cloud/site-upload";
 import { useImageLock } from "./cloud/useImageLock";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
@@ -180,6 +180,57 @@ function stemFromPath(p: string): string {
 
 function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
+}
+
+// ---- Explorer-tree icons (web sidebar). Stroke-based, currentColor. ----
+function ChevronIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  );
+}
+function FolderIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    </svg>
+  );
+}
+function FolderPlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <line x1="12" y1="11" x2="12" y2="17" />
+      <line x1="9" y1="14" x2="15" y2="14" />
+    </svg>
+  );
+}
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <path d="M12 3v12" />
+      <path d="m7 12 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+function ImageIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m21 15-5-5L5 21" />
+    </svg>
+  );
 }
 
 function clickJsonPathFor(imagePath: string, clicksDir: string): string {
@@ -896,7 +947,27 @@ function App() {
   // real server-side gate); `showUpload` toggles the upload screen. Both are
   // inert on desktop (the effect that sets isAdmin early-returns on Tauri).
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [showUpload, setShowUpload] = useState<boolean>(false);
+
+  // Web-only (cloud) explorer state. `allSites` is the folder list shown in the
+  // sidebar tree = the union of persisted (possibly-empty) sites and the sites
+  // that have images, sorted. `collapsedSites` tracks which folders the user has
+  // collapsed (default = expanded). The new-folder inline input and the
+  // add-images upload status/result drive the create + ingest affordances. All
+  // are inert on desktop, which keeps its flat single-folder list.
+  const [allSites, setAllSites] = useState<string[]>([]);
+  const [collapsedSites, setCollapsedSites] = useState<Set<string>>(new Set());
+  const [newFolderOpen, setNewFolderOpen] = useState<boolean>(false);
+  const [newFolderName, setNewFolderName] = useState<string>("");
+  const [newFolderError, setNewFolderError] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<
+    { site: string; done: number; total: number } | null
+  >(null);
+  const [uploadResult, setUploadResult] = useState<
+    { site: string; uploaded: number; skipped: number; failed: number } | null
+  >(null);
+  const addImagesInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadSiteRef = useRef<string | null>(null);
+  const newFolderInputRef = useRef<HTMLInputElement | null>(null);
 
   // Web-only (cloud) soft edit lock (#17). Keyed on the active image's row
   // (site, image_name); the storage path (== image.path on web) drives the
@@ -1018,6 +1089,22 @@ function App() {
         };
       }
       setProgressById(progress);
+
+      // Folders shown in the explorer tree = persisted (possibly-empty) sites ∪
+      // the sites that already have images. A failed `listSites` (e.g. the table
+      // not yet present) degrades to "just the sites with images" rather than
+      // breaking the gallery.
+      let persistedSites: string[] = [];
+      try {
+        persistedSites = await backend.listSites();
+      } catch (e) {
+        console.error("listSites failed", e);
+      }
+      const siteSet = new Set<string>(persistedSites);
+      for (const it of items) siteSet.add(it.site);
+      setAllSites(
+        Array.from(siteSet).sort((a, b) => a.localeCompare(b)),
+      );
     } catch (e) {
       console.error("Gallery load failed", e);
     }
@@ -1391,6 +1478,128 @@ function App() {
       await loadImage(folderImages[idx]);
     },
     [folderImages, image, dirty, handleSave, loadImage]
+  );
+
+  // ---- Web explorer: folder grouping + create + add-images ----
+
+  // Images grouped under their site, each carrying its index into the flat
+  // `folderImages` spine so a tree row still drives `navigateToIndex` (which
+  // keeps arrow-key nav, save-on-navigate, and active tracking working). Web
+  // only; desktop renders the flat list and never reads this.
+  const imagesBySite = useMemo(() => {
+    const m = new Map<string, { path: string; idx: number }[]>();
+    folderImages.forEach((path, idx) => {
+      const s = siteFromPath(path);
+      const arr = m.get(s);
+      if (arr) arr.push({ path, idx });
+      else m.set(s, [{ path, idx }]);
+    });
+    return m;
+  }, [folderImages]);
+
+  const toggleSite = useCallback((site: string) => {
+    setCollapsedSites((prev) => {
+      const next = new Set(prev);
+      if (next.has(site)) next.delete(site);
+      else next.add(site);
+      return next;
+    });
+  }, []);
+
+  const expandSite = useCallback((site: string) => {
+    setCollapsedSites((prev) => {
+      if (!prev.has(site)) return prev;
+      const next = new Set(prev);
+      next.delete(site);
+      return next;
+    });
+  }, []);
+
+  // Keep the active image's folder open so arrow-key navigation never lands on a
+  // hidden image. Web-only; desktop has a single flat folder.
+  useEffect(() => {
+    if (isTauri() || !image) return;
+    expandSite(siteFromPath(image.path));
+  }, [image, expandSite]);
+
+  const openNewFolder = useCallback(() => {
+    setNewFolderError(null);
+    setNewFolderName("");
+    setNewFolderOpen(true);
+    // Focus after the input mounts.
+    requestAnimationFrame(() => newFolderInputRef.current?.focus());
+  }, []);
+
+  const submitNewFolder = useCallback(async () => {
+    const backend = backendRef.current;
+    if (!(backend instanceof SupabaseStorageBackend)) return;
+    const res = validateSiteName(newFolderName);
+    if (!res.ok) {
+      setNewFolderError(res.reason);
+      return;
+    }
+    if (allSites.includes(res.name)) {
+      setNewFolderError("A folder with that name already exists.");
+      return;
+    }
+    try {
+      await backend.createSite(res.name);
+      setNewFolderOpen(false);
+      setNewFolderName("");
+      setNewFolderError(null);
+      await refreshGallery();
+      expandSite(res.name);
+    } catch (e) {
+      setNewFolderError(e instanceof Error ? e.message : String(e));
+    }
+  }, [newFolderName, allSites, refreshGallery, expandSite]);
+
+  const triggerAddImages = useCallback((site: string) => {
+    uploadSiteRef.current = site;
+    const input = addImagesInputRef.current;
+    if (input) {
+      input.value = "";
+      input.click();
+    }
+  }, []);
+
+  const onAddImagesPicked = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const site = uploadSiteRef.current;
+      const backend = backendRef.current;
+      const picked = e.target.files;
+      if (
+        !site ||
+        !picked ||
+        picked.length === 0 ||
+        !(backend instanceof SupabaseStorageBackend)
+      ) {
+        return;
+      }
+      const files = Array.from(picked);
+      setUploadResult(null);
+      setUploadStatus({ site, done: 0, total: files.length });
+      try {
+        const r = await backend.uploadImagesToSite(site, files, (done, total) =>
+          setUploadStatus({ site, done, total }),
+        );
+        setUploadResult({
+          site,
+          uploaded: r.uploaded,
+          skipped: r.skipped,
+          failed: r.failed.length,
+        });
+        await refreshGallery();
+        expandSite(site);
+      } catch (err) {
+        console.error("Add images failed", err);
+        setUploadResult({ site, uploaded: 0, skipped: 0, failed: files.length });
+      } finally {
+        setUploadStatus(null);
+        uploadSiteRef.current = null;
+      }
+    },
+    [refreshGallery, expandSite],
   );
 
   const menuHandlersRef = useRef({
@@ -2609,11 +2818,11 @@ function App() {
       </header>
 
       <section
-        className={`workarea ${folderImages.length > 0 ? "with-folder" : ""} ${
-          image ? "with-rail" : ""
-        }`}
+        className={`workarea ${
+          (isTauri() ? folderImages.length > 0 : true) ? "with-folder" : ""
+        } ${image ? "with-rail" : ""}`}
       >
-        {folderImages.length > 0 && (
+        {(isTauri() ? folderImages.length > 0 : true) && (
           <aside className="folder-sidebar">
             <div className="folder-header">
               <div className="folder-path" title={folderDir ?? ""}>
@@ -2650,61 +2859,102 @@ function App() {
                 </div>
               )}
               {!isTauri() && isAdmin && (
-                <button
-                  type="button"
-                  className="btn upload-trigger"
-                  onClick={() => setShowUpload(true)}
-                >
-                  Upload images
-                </button>
-              )}
-              {!isTauri() && isAdmin && (
-                <button
-                  type="button"
-                  className="btn upload-trigger"
-                  onClick={handleDownloadAll}
-                  title="Download all annotations as a ZIP of per-image JSON files"
-                >
-                  Download all (ZIP)
-                </button>
+                <div className="folder-actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={openNewFolder}
+                    title="Create a new folder (site / camera)"
+                  >
+                    <FolderPlusIcon /> New folder
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={handleDownloadAll}
+                    title="Download all annotations as a ZIP of per-image JSON files"
+                  >
+                    <DownloadIcon /> ZIP
+                  </button>
+                </div>
               )}
             </div>
-            <ul className="image-list">
-              {folderImages.map((path, idx) => {
-                // Web gallery groups by site: emit a subheader whenever the site
-                // changes from the previous row (folderImages is sorted by site,
-                // then name, by listImages). Desktop keeps its flat single-folder
-                // list (one site), so the subheader never appears there.
-                const site = siteFromPath(path);
-                const showSiteHeader =
-                  !isTauri() && (idx === 0 || siteFromPath(folderImages[idx - 1]) !== site);
-                const isActive = image?.path === path;
-                const liveCounts = isActive ? countsByTransect(clicks) : null;
-                const persisted = imageCounts[path];
-                const rowCounts = liveCounts ?? persisted ?? null;
-                const total = rowCounts
-                  ? rowCounts.L + rowCounts.C + rowCounts.R
-                  : 0;
-                // Desktop: "touched" = any local L/C/R count. Web: "touched" =
-                // annotated per the summary columns (#16), since `imageCounts`
-                // is desktop-only and would otherwise read every row as 0.
-                const untouched = isTauri()
-                  ? total === 0
-                  : !(progressById[path] && isAnnotated(progressById[path]));
-                return (
-                  <Fragment key={path}>
-                    {showSiteHeader && (
-                      <li className="image-site-header" aria-hidden>
-                        {site}
-                        {progressSummary.perSite[site] && (
-                          <span className="image-site-progress mono">
-                            {progressSummary.perSite[site].annotated}/
-                            {progressSummary.perSite[site].total}
-                          </span>
-                        )}
-                      </li>
-                    )}
+
+            {!isTauri() && newFolderOpen && (
+              <div className="new-folder-row">
+                <FolderIcon className="folder-icon" />
+                <input
+                  ref={newFolderInputRef}
+                  className="new-folder-input"
+                  placeholder="New site name…  (e.g. cam04)"
+                  value={newFolderName}
+                  onChange={(e) => {
+                    setNewFolderName(e.target.value);
+                    setNewFolderError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitNewFolder();
+                    else if (e.key === "Escape") {
+                      setNewFolderOpen(false);
+                      setNewFolderName("");
+                      setNewFolderError(null);
+                    }
+                  }}
+                />
+                <button type="button" className="btn primary" onClick={submitNewFolder}>
+                  Create
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setNewFolderOpen(false);
+                    setNewFolderName("");
+                    setNewFolderError(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {!isTauri() && newFolderError && (
+              <div className="folder-inline-error" role="alert">
+                {newFolderError}
+              </div>
+            )}
+            {!isTauri() && uploadStatus && (
+              <div className="folder-upload-status" role="status">
+                Uploading to {uploadStatus.site}… {uploadStatus.done}/
+                {uploadStatus.total}
+              </div>
+            )}
+            {!isTauri() && uploadResult && !uploadStatus && (
+              <div className="folder-upload-status" role="status">
+                {uploadResult.site}: {uploadResult.uploaded} added
+                {uploadResult.skipped > 0 && <> · {uploadResult.skipped} skipped</>}
+                {uploadResult.failed > 0 && (
+                  <>
+                    {" "}
+                    · <span className="upload-failed">{uploadResult.failed} failed</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {isTauri() ? (
+              <ul className="image-list">
+                {folderImages.map((path, idx) => {
+                  const isActive = image?.path === path;
+                  const liveCounts = isActive ? countsByTransect(clicks) : null;
+                  const persisted = imageCounts[path];
+                  const rowCounts = liveCounts ?? persisted ?? null;
+                  const total = rowCounts
+                    ? rowCounts.L + rowCounts.C + rowCounts.R
+                    : 0;
+                  const untouched = total === 0;
+                  return (
                     <li
+                      key={path}
                       className={`image-item ${isActive ? "active" : ""} ${
                         untouched ? "untouched" : ""
                       }`}
@@ -2714,24 +2964,129 @@ function App() {
                       <span className="image-item-name">{pathBasename(path)}</span>
                       {rowCounts && total > 0 && (
                         <span className="image-item-counts">
-                          <span style={{ color: TRANSECT_COLORS.L }}>
-                            {rowCounts.L}
-                          </span>
+                          <span style={{ color: TRANSECT_COLORS.L }}>{rowCounts.L}</span>
                           <span className="dot">·</span>
-                          <span style={{ color: TRANSECT_COLORS.C }}>
-                            {rowCounts.C}
-                          </span>
+                          <span style={{ color: TRANSECT_COLORS.C }}>{rowCounts.C}</span>
                           <span className="dot">·</span>
-                          <span style={{ color: TRANSECT_COLORS.R }}>
-                            {rowCounts.R}
-                          </span>
+                          <span style={{ color: TRANSECT_COLORS.R }}>{rowCounts.R}</span>
                         </span>
                       )}
                     </li>
-                  </Fragment>
-                );
-              })}
-            </ul>
+                  );
+                })}
+              </ul>
+            ) : allSites.length === 0 ? (
+              <div className="sb-empty">
+                {isAdmin
+                  ? "No folders yet. Click New folder to create a site (camera), then add its images."
+                  : "No images in the shared dataset yet. Ask the project admin to add a camera folder."}
+              </div>
+            ) : (
+              <div className="tree">
+                {allSites.map((site) => {
+                  const imgs = imagesBySite.get(site) ?? [];
+                  const collapsed = collapsedSites.has(site);
+                  const prog = progressSummary.perSite[site];
+                  return (
+                    <div className={`folder ${collapsed ? "" : "open"}`} key={site}>
+                      <div
+                        className="folder-row"
+                        onClick={() => toggleSite(site)}
+                        title={site}
+                      >
+                        <ChevronIcon className="chev" />
+                        <FolderIcon className="folder-icon" />
+                        <span className="folder-name">{site}</span>
+                        {prog ? (
+                          <span className="folder-badge mono">
+                            {prog.annotated}/{prog.total}
+                          </span>
+                        ) : (
+                          <span className="folder-badge empty">empty</span>
+                        )}
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            className="folder-add"
+                            title={`Add images to ${site}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              triggerAddImages(site);
+                            }}
+                          >
+                            <PlusIcon />
+                          </button>
+                        )}
+                      </div>
+                      {!collapsed && (
+                        <div className="folder-children">
+                          {imgs.length === 0 ? (
+                            <div className="folder-empty-note">
+                              No images yet
+                              {isAdmin ? " — click + to add some." : "."}
+                            </div>
+                          ) : (
+                            imgs.map(({ path, idx }) => {
+                              const isActive = image?.path === path;
+                              const liveCounts = isActive
+                                ? countsByTransect(clicks)
+                                : null;
+                              const total = liveCounts
+                                ? liveCounts.L + liveCounts.C + liveCounts.R
+                                : 0;
+                              const untouched = !(
+                                progressById[path] && isAnnotated(progressById[path])
+                              );
+                              return (
+                                <div
+                                  key={path}
+                                  className={`image-item ${isActive ? "active" : ""} ${
+                                    untouched && !isActive ? "untouched" : ""
+                                  }`}
+                                  onClick={() => navigateToIndex(idx)}
+                                  title={path}
+                                >
+                                  <ImageIcon className="img-icon" />
+                                  <span className="image-item-name">
+                                    {pathBasename(path)}
+                                  </span>
+                                  {liveCounts && total > 0 && (
+                                    <span className="image-item-counts">
+                                      <span style={{ color: TRANSECT_COLORS.L }}>
+                                        {liveCounts.L}
+                                      </span>
+                                      <span className="dot">·</span>
+                                      <span style={{ color: TRANSECT_COLORS.C }}>
+                                        {liveCounts.C}
+                                      </span>
+                                      <span className="dot">·</span>
+                                      <span style={{ color: TRANSECT_COLORS.R }}>
+                                        {liveCounts.R}
+                                      </span>
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!isTauri() && isAdmin && (
+              <input
+                ref={addImagesInputRef}
+                type="file"
+                multiple
+                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                style={{ display: "none" }}
+                onChange={onAddImagesPicked}
+              />
+            )}
           </aside>
         )}
 
@@ -2831,22 +3186,19 @@ function App() {
                     {folderImages.length === 0 && (
                       <span className="hint">
                         {isAdmin
-                          ? "No images in the shared dataset yet — upload a camera folder to begin."
-                          : "No images in the shared dataset yet. Ask the project admin to upload a camera folder."}
+                          ? "No images in the shared dataset yet — create a folder (camera) and add its images to begin."
+                          : "No images in the shared dataset yet. Ask the project admin to add a camera folder."}
                       </span>
                     )}
                     {folderImages.length > 0 && (
                       <span className="hint">
-                        Pick an image from the gallery on the left to begin.
+                        Pick an image from the explorer on the left to begin.
                       </span>
                     )}
                     {isAdmin && (
                       <div className="state-buttons">
-                        <button
-                          className="btn primary"
-                          onClick={() => setShowUpload(true)}
-                        >
-                          Upload images
+                        <button className="btn primary" onClick={openNewFolder}>
+                          New folder
                         </button>
                       </div>
                     )}
@@ -3102,16 +3454,6 @@ function App() {
           <span>no image</span>
         )}
       </footer>
-
-      {/* Web-only admin ingest. Guarded by `isAdmin` (RLS is the real gate). The
-          backend instance is the SupabaseStorageBackend on the web build. */}
-      {showUpload && !isTauri() && backendRef.current instanceof SupabaseStorageBackend && (
-        <UploadScreen
-          backend={backendRef.current}
-          onDone={refreshGallery}
-          onClose={() => setShowUpload(false)}
-        />
-      )}
     </main>
   );
 }

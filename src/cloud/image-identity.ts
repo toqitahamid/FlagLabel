@@ -1,4 +1,12 @@
-const IMAGE_EXTS = new Set(["jpg", "jpeg", "png"]);
+export const IMAGE_EXTS = new Set(["jpg", "jpeg", "png"]);
+
+// True when `filename` ends in a supported image extension (case-insensitive).
+// Shared by the cloud uploader so listing and ingest agree on "is this an image".
+export function isImageFilename(filename: string): boolean {
+  const dot = filename.lastIndexOf(".");
+  if (dot === -1) return false;
+  return IMAGE_EXTS.has(filename.slice(dot + 1).toLowerCase());
+}
 
 export function imageRefFromStoragePath(
   path: string

@@ -281,6 +281,196 @@ body,
   color: var(--text-secondary);
 }
 
+/* ---------- Web explorer (folders / sites tree) ---------- */
+
+.folder-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.folder-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.folder-actions .btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 8px;
+  cursor: pointer;
+  color: var(--text-primary);
+  border-left: 2px solid transparent;
+  transition: background-color 60ms ease;
+}
+
+.folder-row:hover {
+  background: var(--bg-elevated);
+}
+
+.chev {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 120ms var(--ease-out);
+}
+
+.folder.open > .folder-row .chev {
+  transform: rotate(90deg);
+}
+
+.folder-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.folder-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.folder-badge.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-badge.empty {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.folder-add {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.folder-add svg {
+  width: 14px;
+  height: 14px;
+}
+
+.folder-row:hover .folder-add {
+  display: inline-flex;
+}
+
+.folder-row:hover .folder-badge {
+  display: none;
+}
+
+.folder-add:hover {
+  background: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.folder-empty-note {
+  padding: 5px 12px 7px 34px;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+/* Image rows inside the tree: indented under the folder, with a leading icon. */
+.tree .image-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 34px;
+}
+
+.tree .image-item .img-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* Sidebar empty state (no folders yet) */
+.sb-empty {
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* Inline "new folder" name input row */
+.new-folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.new-folder-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  outline: none;
+}
+
+.folder-inline-error {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--danger-soft);
+}
+
+.folder-upload-status {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.folder-upload-status .upload-failed {
+  color: var(--danger-soft);
+}
+
 .state-buttons {
   display: flex;
   gap: 8px;
