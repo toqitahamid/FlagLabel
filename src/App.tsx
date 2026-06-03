@@ -2274,17 +2274,6 @@ function App() {
                   <span className="lbl">G</span>
                   <span className="mono total">{flagToGroundSpanCount}</span>
                 </div>
-                <div className="counts-line">
-                  <span style={{ color: TRANSECT_COLORS.L }}>L</span>
-                  <span className="mono">{counts.L}</span>
-                  <span className="sep">·</span>
-                  <span style={{ color: TRANSECT_COLORS.C }}>C</span>
-                  <span className="mono">{counts.C}</span>
-                  <span className="sep">·</span>
-                  <span style={{ color: TRANSECT_COLORS.R }}>R</span>
-                  <span className="mono">{counts.R}</span>
-                  <span className="lbl">wire–ground</span>
-                </div>
               </div>
 
               {clicks.length > 0 && (
