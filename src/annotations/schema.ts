@@ -22,7 +22,7 @@ export type FileMeta = {
   image_h: number;
 };
 
-type AnnotationFile = {
+export type AnnotationFile = {
   schema_version: number;
   site: string;
   image: string;
