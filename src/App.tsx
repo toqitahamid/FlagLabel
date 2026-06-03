@@ -63,6 +63,20 @@ const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
   flag_to_ground: "flag_to_ground_span",
 };
 
+// The annotation-type selector, in keyboard order (Q W / E R → a 2×2 grid).
+// One entry per kind keeps the rail buttons DRY and in sync with the union.
+const ANNOTATION_TOOLS: { kind: ActiveAnnoType; label: string; title: string }[] =
+  [
+    { kind: "wire_ground", label: "Wire–ground", title: "Wire–ground point (Q)" },
+    { kind: "vertical_span", label: "Vertical", title: "Vertical span (W)" },
+    { kind: "horizontal_span", label: "Horizontal", title: "Horizontal span (E)" },
+    {
+      kind: "flag_to_ground_span",
+      label: "Flag→ground",
+      title: "Flag-to-ground span (R)",
+    },
+  ];
+
 type LoadedImage = {
   path: string;
   url: string;
@@ -2165,79 +2179,20 @@ function App() {
                   <span>Annotation</span>
                   <span className="key-hint">Q · W · E · R</span>
                 </div>
-                <div className="segmented">
-                  <button
-                    className={`segmented-btn ${
-                      activeType === "wire_ground" ? "active" : ""
-                    }`}
-                    style={
-                      activeType === "wire_ground"
-                        ? {
-                            background: "var(--text-primary)",
-                            color: "var(--bg-app)",
-                            borderColor: "var(--text-primary)",
-                          }
-                        : undefined
-                    }
-                    onClick={() => setActiveType("wire_ground")}
-                    title="Wire–ground point (Q)"
-                  >
-                    Wire–ground
-                  </button>
-                  <button
-                    className={`segmented-btn ${
-                      activeType === "vertical_span" ? "active" : ""
-                    }`}
-                    style={
-                      activeType === "vertical_span"
-                        ? {
-                            background: "var(--text-primary)",
-                            color: "var(--bg-app)",
-                            borderColor: "var(--text-primary)",
-                          }
-                        : undefined
-                    }
-                    onClick={() => setActiveType("vertical_span")}
-                    title="Vertical span (W)"
-                  >
-                    Vert. span
-                  </button>
-                  <button
-                    className={`segmented-btn ${
-                      activeType === "horizontal_span" ? "active" : ""
-                    }`}
-                    style={
-                      activeType === "horizontal_span"
-                        ? {
-                            background: "var(--text-primary)",
-                            color: "var(--bg-app)",
-                            borderColor: "var(--text-primary)",
-                          }
-                        : undefined
-                    }
-                    onClick={() => setActiveType("horizontal_span")}
-                    title="Horizontal span (E)"
-                  >
-                    Horiz. span
-                  </button>
-                  <button
-                    className={`segmented-btn ${
-                      activeType === "flag_to_ground_span" ? "active" : ""
-                    }`}
-                    style={
-                      activeType === "flag_to_ground_span"
-                        ? {
-                            background: "var(--text-primary)",
-                            color: "var(--bg-app)",
-                            borderColor: "var(--text-primary)",
-                          }
-                        : undefined
-                    }
-                    onClick={() => setActiveType("flag_to_ground_span")}
-                    title="Flag-to-ground span (R)"
-                  >
-                    Flag→ground
-                  </button>
+                <div className="segmented tool-grid">
+                  {ANNOTATION_TOOLS.map((tool) => (
+                    <button
+                      key={tool.kind}
+                      className={`segmented-btn ${
+                        activeType === tool.kind ? "tool-active" : ""
+                      }`}
+                      onClick={() => setActiveType(tool.kind)}
+                      title={tool.title}
+                      aria-pressed={activeType === tool.kind}
+                    >
+                      {tool.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 

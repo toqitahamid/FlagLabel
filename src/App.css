@@ -443,6 +443,28 @@ body,
   transform: scale(0.98);
 }
 
+/* Annotation-type selector: 2×2 grid of word-labeled tools. The transect
+   control below it stays a 3-up row of single letters. */
+.segmented.tool-grid {
+  grid-template-columns: 1fr 1fr;
+}
+
+.tool-grid .segmented-btn {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* Selected tool: a neutral inverse fill, deliberately distinct from the
+   data-colored (L/C/R) transect selection so the two read as different
+   kinds of choice. Inline styles previously did this per-button. */
+.segmented-btn.tool-active,
+.segmented-btn.tool-active:hover {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--bg-app);
+  font-weight: 600;
+}
+
 /* Distance input */
 
 .distance-row {
