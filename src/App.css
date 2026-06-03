@@ -1056,6 +1056,149 @@ canvas {
   margin-bottom: 4px;
 }
 
+/* ---------- First-run intro (empty state) ---------- */
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  max-width: 440px;
+}
+
+.intro .state-tagline {
+  margin-bottom: 0;
+  max-width: none;
+}
+
+.intro-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+}
+
+.intro-step {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 12px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.intro-step-n {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+}
+
+.intro-keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: baseline;
+}
+
+.intro-keys-sep {
+  color: var(--border-strong);
+  margin: 0 2px;
+}
+
+.intro kbd,
+.canvas-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* ---------- First-run in-flow hint (over the canvas) ---------- */
+
+.canvas-hint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 8px 8px 8px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 14px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  animation: canvas-hint-in 200ms var(--ease-out);
+}
+
+.canvas-hint kbd {
+  color: var(--text-secondary);
+}
+
+@keyframes canvas-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.canvas-hint-dismiss {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background-color var(--transition-fast) ease,
+    border-color var(--transition-fast) ease;
+}
+
+.canvas-hint-dismiss:hover {
+  background: var(--bg-app);
+  border-color: var(--border-strong);
+}
+
+.canvas-hint-dismiss:active {
+  transform: scale(0.98);
+}
+
+.canvas-hint-dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 /* ---------- Scrollbars ---------- */
 
 /* Tone the native scrollbar to the graphite palette so it reads as part of the

@@ -141,6 +141,7 @@ const CROSSHAIR_COLOR = "#84cc16";
 
 const SETTINGS_FILE = "settings.json";
 const SETTINGS_KEY_CLICKS_DIR = "clicks_dir";
+const SETTINGS_KEY_ONBOARDED = "onboarded";
 
 function pathBasename(p: string): string {
   return p.split("/").pop() ?? p;
@@ -717,6 +718,13 @@ function App() {
   const [appVersion, setAppVersion] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
+  // First-run onboarding. `firstRun` gates the in-flow placement hint shown over
+  // the canvas; it starts false so returning users never flash it, and flips
+  // true only once the store confirms this user has never placed an annotation.
+  // `onboardedRef` guards the one-time persist (see markOnboarded).
+  const [firstRun, setFirstRun] = useState<boolean>(false);
+  const onboardedRef = useRef<boolean>(true);
+
   useEffect(() => {
     getVersion().then(setAppVersion).catch(() => {});
   }, []);
@@ -735,6 +743,13 @@ function App() {
         storeRef.current = s;
         const dir = await s.get<string>(SETTINGS_KEY_CLICKS_DIR);
         if (typeof dir === "string") setClicksDir(dir);
+        // New users (no persisted flag) get the in-flow placement hint until
+        // they place their first annotation; see markOnboarded.
+        const done = await s.get<boolean>(SETTINGS_KEY_ONBOARDED);
+        if (done !== true) {
+          onboardedRef.current = false;
+          setFirstRun(true);
+        }
       } catch (e) {
         console.error("Failed to load settings", e);
       }
@@ -1687,6 +1702,23 @@ function App() {
   // dirty) and let the labeler choose replace / keep both / cancel. Reads `clicks`
   // fresh (it's in this callback's deps) so the collision check never runs against
   // a stale snapshot.
+  // Placing the first annotation is the aha moment: persist that this user is
+  // onboarded and drop the in-flow hint. Guarded via the ref so the store write
+  // happens exactly once, even though this fires on every successful placement.
+  const markOnboarded = useCallback(() => {
+    if (onboardedRef.current) return;
+    onboardedRef.current = true;
+    setFirstRun(false);
+    (async () => {
+      try {
+        await storeRef.current?.set(SETTINGS_KEY_ONBOARDED, true);
+        await storeRef.current?.save();
+      } catch (e) {
+        console.error("Failed to persist onboarding flag", e);
+      }
+    })();
+  }, []);
+
   const commitAnnotation = useCallback(
     (candidate: Annotation) => {
       const existingIndex = findCollision(clicks, {
@@ -1698,11 +1730,12 @@ function App() {
         setClicks((prev) => [...prev, candidate]);
         setDirty(true);
         applyAutoAdvance(candidate);
+        markOnboarded();
         return;
       }
       setPendingCollision({ candidate, existingIndex });
     },
-    [clicks, applyAutoAdvance]
+    [clicks, applyAutoAdvance, markOnboarded]
   );
 
   const addClickAt = useCallback(
@@ -2164,29 +2197,91 @@ function App() {
             </div>
           ) : (
             <div className="state-center">
-              <div className="state-tagline">
-                Mark wire-ground points and flag spans to calibrate distance.
+              <div className="intro">
+                <p className="state-tagline">
+                  Mark wire–ground points and flag spans to calibrate distance.
+                </p>
+                <ol className="intro-steps">
+                  <li className="intro-step">
+                    <span className="intro-step-n">1</span>
+                    <span className="intro-step-body">
+                      Open an image, or a folder to step through a whole site.
+                      <span className="intro-keys">
+                        <kbd>⌘O</kbd>
+                        <kbd>⌘⇧O</kbd>
+                      </span>
+                    </span>
+                  </li>
+                  <li className="intro-step">
+                    <span className="intro-step-n">2</span>
+                    <span className="intro-step-body">
+                      Pick a tool, transect, and distance.
+                      <span className="intro-keys">
+                        <kbd>Q</kbd>
+                        <kbd>W</kbd>
+                        <kbd>E</kbd>
+                        <kbd>R</kbd>
+                        <span className="intro-keys-sep">·</span>
+                        <kbd>1</kbd>
+                        <kbd>2</kbd>
+                        <kbd>3</kbd>
+                        <span className="intro-keys-sep">·</span>
+                        <kbd>↑</kbd>
+                        <kbd>↓</kbd>
+                      </span>
+                    </span>
+                  </li>
+                  <li className="intro-step">
+                    <span className="intro-step-n">3</span>
+                    <span className="intro-step-body">
+                      Click the wire–ground point. The zoom panel places it to
+                      sub-pixel precision.
+                    </span>
+                  </li>
+                </ol>
+                <div className="state-buttons">
+                  <button className="btn primary" onClick={handleOpen}>
+                    Open image
+                  </button>
+                  <button className="btn" onClick={handleOpenFolder}>
+                    Open folder
+                  </button>
+                </div>
+                <span className="hint">
+                  <button
+                    className="link"
+                    onClick={() => setShowHelp(true)}
+                    type="button"
+                  >
+                    <kbd>?</kbd> all shortcuts
+                  </button>
+                </span>
               </div>
-              <div className="state-buttons">
-                <button className="btn primary" onClick={handleOpen}>
-                  Open image
-                </button>
-                <button className="btn" onClick={handleOpenFolder}>
-                  Open folder
-                </button>
-              </div>
-              <span className="hint">
-                <kbd>⌘O</kbd> file · <kbd>⌘⇧O</kbd> folder ·{" "}
-                <button
-                  className="link"
-                  onClick={() => setShowHelp(true)}
-                  type="button"
-                >
-                  <kbd>?</kbd> shortcuts
-                </button>
-              </span>
             </div>
           )}
+
+          {/* First-run guidance, shown over the image until the user places
+              their first annotation. Complements the rail's per-tool hint
+              (which covers what to click) with the setup step it omits. */}
+          {image &&
+            firstRun &&
+            clicks.length === 0 &&
+            pending.kind !== "awaitingSecond" && (
+              <div className="canvas-hint" role="status">
+                <span>
+                  Set the transect (<kbd>1</kbd>/<kbd>2</kbd>/<kbd>3</kbd>) and
+                  distance (<kbd>↑</kbd>/<kbd>↓</kbd>) on the right, then place
+                  your annotation. The zoom panel gives sub-pixel precision.
+                </span>
+                <button
+                  type="button"
+                  className="canvas-hint-dismiss"
+                  onClick={markOnboarded}
+                >
+                  Got it
+                </button>
+              </div>
+            )}
         </div>
 
         {image && (
