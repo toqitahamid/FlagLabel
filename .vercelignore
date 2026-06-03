@@ -1,0 +1,8 @@
+# The web build only needs the Vite frontend. Exclude the Tauri/Rust side
+# (src-tauri/target alone is tens of thousands of build-artifact files), plus
+# local build output and deps Vercel installs itself.
+src-tauri
+node_modules
+dist
+*.log
+.git
