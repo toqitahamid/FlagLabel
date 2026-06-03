@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.1
+
+### Annotation guidance
+- A live help line under the annotation-type selector now spells out how to place the active type (e.g. "Top → bottom edge of the flag · 2 clicks" for a vertical span), and switches to "Click the second point to finish · Esc to cancel" while a span is half-placed. It's always visible, so it works whether you reach for the mouse or the keyboard.
+- Each annotation-type button carries a tooltip with the same directional hint.
+- The empty-state tagline now mentions both wire-ground points and flag spans, instead of only the wire-ground intersection.
+
 ## v0.2.0
 
 ### Span annotations for flag calibration
