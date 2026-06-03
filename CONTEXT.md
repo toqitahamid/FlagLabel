@@ -54,6 +54,14 @@ One of three sampling lines — Left (`L`), Center (`C`), Right (`R`). Selected 
 **Distance**:
 The flag's nominal distance from the camera, 1–15 (meters). Selected via `↑`/`↓`. Each annotation carries one.
 
+**Site**:
+The **camera** an image was captured by — concretely, the parent folder name of the image (e.g. `cam02`). The top-level grouping for a project's photos, and the prefix of every export filename (`<site>__<imagestem>.json`). In the cloud build, photos are stored under `photos/<site>/…` to preserve this.
+_Avoid_: camera station, deployment, folder (use "site")
+
+**Labeler**:
+A team member who places annotations. In the desktop build, identity is implicit (one person, local files). In the shared cloud build, the labeler is the logged-in account: recorded as the last editor of an image and the holder of its edit **lock** while working on it.
+_Avoid_: annotator, user, reviewer (use "labeler")
+
 ## Flagged ambiguities
 
 - **"Flag's two ends"** (the user's original phrasing) was ambiguous between vertical (top/bottom) and horizontal (left/right). Resolved: both are needed — they are two distinct annotation types (**vertical span**, **horizontal span**), chosen by the labeler based on which edges are visible.
