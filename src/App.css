@@ -283,21 +283,37 @@ body,
 
 /* ---------- Web explorer (folders / sites tree) ---------- */
 
+/* Compact icon toolbar in the sidebar header (VS Code-style). */
 .folder-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 2px;
+  margin-top: 8px;
+  justify-content: flex-end;
 }
 
-.folder-actions .btn {
+.icon-btn {
+  width: 26px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 80ms ease, color 80ms ease;
 }
 
-.folder-actions .btn svg {
-  width: 13px;
-  height: 13px;
+.icon-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.icon-btn svg {
+  width: 15px;
+  height: 15px;
 }
 
 .tree {
@@ -432,13 +448,19 @@ body,
   line-height: 1.6;
 }
 
-/* Inline "new folder" name input row */
+/* Inline "new folder" row — sits in the tree exactly like a folder row
+   (same indent + folder icon), but the name is a clean editable input.
+   Enter commits, Esc/blur-while-empty cancels. No buttons (VS Code-style). */
 .new-folder-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 4px 10px 4px 8px;
+}
+
+.chev-spacer {
+  width: 14px;
+  flex-shrink: 0;
 }
 
 .new-folder-input {
@@ -450,8 +472,12 @@ body,
   color: var(--text-primary);
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
-  padding: 4px 7px;
+  padding: 3px 6px;
   outline: none;
+}
+
+.new-folder-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .folder-inline-error {

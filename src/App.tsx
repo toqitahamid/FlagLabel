@@ -968,6 +968,7 @@ function App() {
   const addImagesInputRef = useRef<HTMLInputElement | null>(null);
   const uploadSiteRef = useRef<string | null>(null);
   const newFolderInputRef = useRef<HTMLInputElement | null>(null);
+  const newFolderSubmittingRef = useRef<boolean>(false);
 
   // Web-only (cloud) soft edit lock (#17). Keyed on the active image's row
   // (site, image_name); the storage path (== image.path on web) drives the
@@ -1530,7 +1531,17 @@ function App() {
     requestAnimationFrame(() => newFolderInputRef.current?.focus());
   }, []);
 
+  const closeNewFolder = useCallback(() => {
+    setNewFolderOpen(false);
+    setNewFolderName("");
+    setNewFolderError(null);
+  }, []);
+
+  // VS Code-style inline create: Enter (or blur with a name) commits, Esc/blur-
+  // while-empty cancels. The ref guards against the success path's unmount→blur
+  // firing a second submit mid-await.
   const submitNewFolder = useCallback(async () => {
+    if (newFolderSubmittingRef.current) return;
     const backend = backendRef.current;
     if (!(backend instanceof SupabaseStorageBackend)) return;
     const res = validateSiteName(newFolderName);
@@ -1542,17 +1553,24 @@ function App() {
       setNewFolderError("A folder with that name already exists.");
       return;
     }
+    newFolderSubmittingRef.current = true;
     try {
       await backend.createSite(res.name);
-      setNewFolderOpen(false);
-      setNewFolderName("");
-      setNewFolderError(null);
+      closeNewFolder();
       await refreshGallery();
       expandSite(res.name);
     } catch (e) {
       setNewFolderError(e instanceof Error ? e.message : String(e));
+    } finally {
+      newFolderSubmittingRef.current = false;
     }
-  }, [newFolderName, allSites, refreshGallery, expandSite]);
+  }, [newFolderName, allSites, refreshGallery, expandSite, closeNewFolder]);
+
+  const onNewFolderBlur = useCallback(() => {
+    if (newFolderSubmittingRef.current) return;
+    if (newFolderName.trim()) submitNewFolder();
+    else closeNewFolder();
+  }, [newFolderName, submitNewFolder, closeNewFolder]);
 
   const triggerAddImages = useCallback((site: string) => {
     uploadSiteRef.current = site;
@@ -2862,19 +2880,21 @@ function App() {
                 <div className="folder-actions">
                   <button
                     type="button"
-                    className="btn"
+                    className="icon-btn"
                     onClick={openNewFolder}
-                    title="Create a new folder (site / camera)"
+                    title="New folder"
+                    aria-label="New folder"
                   >
-                    <FolderPlusIcon /> New folder
+                    <FolderPlusIcon />
                   </button>
                   <button
                     type="button"
-                    className="btn"
+                    className="icon-btn"
                     onClick={handleDownloadAll}
                     title="Download all annotations as a ZIP of per-image JSON files"
+                    aria-label="Download all annotations (ZIP)"
                   >
-                    <DownloadIcon /> ZIP
+                    <DownloadIcon />
                   </button>
                 </div>
               )}
@@ -2882,11 +2902,12 @@ function App() {
 
             {!isTauri() && newFolderOpen && (
               <div className="new-folder-row">
+                <span className="chev-spacer" aria-hidden />
                 <FolderIcon className="folder-icon" />
                 <input
                   ref={newFolderInputRef}
                   className="new-folder-input"
-                  placeholder="New site name…  (e.g. cam04)"
+                  placeholder="folder name"
                   value={newFolderName}
                   onChange={(e) => {
                     setNewFolderName(e.target.value);
@@ -2894,27 +2915,10 @@ function App() {
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") submitNewFolder();
-                    else if (e.key === "Escape") {
-                      setNewFolderOpen(false);
-                      setNewFolderName("");
-                      setNewFolderError(null);
-                    }
+                    else if (e.key === "Escape") closeNewFolder();
                   }}
+                  onBlur={onNewFolderBlur}
                 />
-                <button type="button" className="btn primary" onClick={submitNewFolder}>
-                  Create
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => {
-                    setNewFolderOpen(false);
-                    setNewFolderName("");
-                    setNewFolderError(null);
-                  }}
-                >
-                  Cancel
-                </button>
               </div>
             )}
             {!isTauri() && newFolderError && (
