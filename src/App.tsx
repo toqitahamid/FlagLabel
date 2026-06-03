@@ -36,6 +36,8 @@ import {
 } from "./annotations/pending-span";
 import { findCollision } from "./annotations/collision";
 import { TauriStorageBackend } from "./cloud/tauri-backend";
+import { SupabaseStorageBackend } from "./cloud/supabase-backend";
+import { isTauri } from "./cloud/platform";
 import type { ImageItem } from "./cloud/storage-backend";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
@@ -880,6 +882,7 @@ function App() {
   const onboardedRef = useRef<boolean>(true);
 
   useEffect(() => {
+    if (!isTauri()) return;
     getVersion().then(setAppVersion).catch(() => {});
   }, []);
 
@@ -891,10 +894,17 @@ function App() {
   // The persistence seam. A stable instance (not in any effect dep array) whose
   // folder + clicks dir are kept in sync via setters wherever App sets that
   // state, so I/O routes through the backend without changing effect timing.
-  const backendRef = useRef<TauriStorageBackend>(new TauriStorageBackend());
+  // Platform-selected: desktop uses the filesystem backend, the web build uses
+  // the Supabase backend. Both expose the same StorageBackend surface plus the
+  // setFolder/setClicksDir setters App calls (no-ops on the web backend), so the
+  // call sites below typecheck and run unchanged on either platform.
+  const backendRef = useRef<TauriStorageBackend | SupabaseStorageBackend>(
+    isTauri() ? new TauriStorageBackend() : new SupabaseStorageBackend(),
+  );
 
   // Load persisted settings on mount
   useEffect(() => {
+    if (!isTauri()) return;
     (async () => {
       try {
         const s = await Store.load(SETTINGS_FILE);
@@ -915,6 +925,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) return;
     (async () => {
       try {
         const update = await check();
@@ -934,7 +945,18 @@ function App() {
 
   const loadImage = useCallback((path: string): Promise<void> => {
     setError(null);
-    const url = backendRef.current.resolveImageUrl(itemFromPath(path));
+    // Desktop-only path: `loadImage` is reached only when images are loaded from
+    // a local folder (the web backend's `listImages` returns [] this slice — the
+    // cloud gallery is #14), so the backend here is always the Tauri backend and
+    // `resolveImageUrl` is synchronous. Narrow to the sync backend to keep the
+    // existing synchronous image-load flow; the cloud signed-URL (async) path is
+    // wired up with the #14 gallery.
+    const backend = backendRef.current;
+    if (!(backend instanceof TauriStorageBackend)) {
+      // No-op in web until #14 supplies cloud images.
+      return Promise.resolve();
+    }
+    const url = backend.resolveImageUrl(itemFromPath(path));
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
@@ -974,6 +996,7 @@ function App() {
   }, []);
 
   const handleOpen = useCallback(async () => {
+    if (!isTauri()) return; // native file dialog is desktop-only (web gallery: #14)
     if (dirty) {
       const proceed = await ask(
         `You have ${clicks.length} unsaved click${
@@ -995,6 +1018,7 @@ function App() {
   }, [dirty, clicks.length, loadImage]);
 
   const handleOpenFolder = useCallback(async () => {
+    if (!isTauri()) return; // native folder dialog is desktop-only (web gallery: #14)
     if (dirty) {
       const proceed = await ask(
         `You have ${clicks.length} unsaved click${
@@ -1082,6 +1106,9 @@ function App() {
     if (clicks.length === 0 && !dirty) return;
     let dir = clicksDir;
     if (!dir) {
+      // Picking a save folder uses the native dialog (desktop-only). On web there
+      // is no local clicks dir — annotations persist to Supabase via the backend.
+      if (!isTauri()) return;
       const selected = await open({
         multiple: false,
         directory: true,
@@ -1156,6 +1183,7 @@ function App() {
   }, [handleOpen, handleOpenFolder, handleSave]);
 
   useEffect(() => {
+    if (!isTauri()) return;
     let cancelled = false;
     (async () => {
       try {
@@ -1281,12 +1309,12 @@ function App() {
 
   const handleClear = useCallback(async () => {
     if (clicks.length === 0) return;
-    const ok = await ask(
-      `Clear all ${clicks.length} click${
-        clicks.length === 1 ? "" : "s"
-      } for this image?`,
-      { title: "Clear clicks", kind: "warning" }
-    );
+    const message = `Clear all ${clicks.length} click${
+      clicks.length === 1 ? "" : "s"
+    } for this image?`;
+    const ok = isTauri()
+      ? await ask(message, { title: "Clear clicks", kind: "warning" })
+      : window.confirm(message);
     if (ok) {
       setClicks([]);
       setSelectedIdx(null);
@@ -2387,24 +2415,33 @@ function App() {
                   Set the distance <kbd>↑</kbd>
                   <kbd>↓</kbd>, then click to place.
                 </p>
-                <div className="state-buttons">
-                  <button className="btn primary" onClick={handleOpen}>
-                    Open image
-                  </button>
-                  <button className="btn" onClick={handleOpenFolder}>
-                    Open folder
-                  </button>
-                </div>
-                <span className="hint">
-                  <kbd>⌘O</kbd> file · <kbd>⌘⇧O</kbd> folder ·{" "}
-                  <button
-                    className="link"
-                    onClick={() => setShowHelp(true)}
-                    type="button"
-                  >
-                    <kbd>?</kbd> all shortcuts
-                  </button>
-                </span>
+                {isTauri() ? (
+                  <>
+                    <div className="state-buttons">
+                      <button className="btn primary" onClick={handleOpen}>
+                        Open image
+                      </button>
+                      <button className="btn" onClick={handleOpenFolder}>
+                        Open folder
+                      </button>
+                    </div>
+                    <span className="hint">
+                      <kbd>⌘O</kbd> file · <kbd>⌘⇧O</kbd> folder ·{" "}
+                      <button
+                        className="link"
+                        onClick={() => setShowHelp(true)}
+                        type="button"
+                      >
+                        <kbd>?</kbd> all shortcuts
+                      </button>
+                    </span>
+                  </>
+                ) : (
+                  <span className="hint">
+                    The shared dataset loads from the cloud — the image gallery
+                    is coming soon.
+                  </span>
+                )}
               </div>
             </div>
           )}

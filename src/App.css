@@ -1483,3 +1483,115 @@ canvas {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Web-only auth gate ─────────────────────────────────────────────────────
+   The login screen, the signed-in sign-out bar, and the config-error fallback.
+   Desktop never renders any of this (AuthGate is a pass-through in Tauri). */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 28px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.auth-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.auth-subtitle {
+  margin: -6px 0 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.auth-field input {
+  padding: 9px 11px;
+  font-size: 14px;
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: border-color var(--transition-fast) var(--ease-out);
+}
+
+.auth-field input:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.auth-submit {
+  margin-top: 4px;
+}
+
+.auth-error {
+  padding: 9px 11px;
+  font-size: 13px;
+  color: var(--danger-soft);
+  background: rgba(185, 28, 28, 0.12);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+}
+
+.auth-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.auth-loading {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.auth-shell {
+  display: contents;
+}
+
+.auth-bar {
+  position: fixed;
+  top: 8px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.auth-bar-email {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
