@@ -28,6 +28,11 @@ dist-ssr
 *.key.pub
 signing.key*
 
+# Env / secrets — NEVER commit (public repo). .env.example is the only one allowed.
+.env
+.env.*
+!.env.example
+
 # Local planning docs — not for the public repo
 PLAN.md
 UI_PLAN.md
