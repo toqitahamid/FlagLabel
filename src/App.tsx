@@ -2283,8 +2283,6 @@ function App() {
                   <span className="sep">·</span>
                   <span style={{ color: TRANSECT_COLORS.R }}>R</span>
                   <span className="mono">{counts.R}</span>
-                  <span className="eq-sep">=</span>
-                  <span className="mono total">{wireGroundCount}</span>
                   <span className="lbl">wire–ground</span>
                 </div>
               </div>

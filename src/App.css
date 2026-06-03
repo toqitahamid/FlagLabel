@@ -865,11 +865,6 @@ body,
   margin: 0 2px;
 }
 
-.counts-line .eq-sep {
-  color: var(--text-tertiary);
-  margin: 0 6px;
-}
-
 .counts-line .total {
   color: var(--text-primary);
 }
