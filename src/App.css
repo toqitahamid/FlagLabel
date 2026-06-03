@@ -474,6 +474,20 @@ body,
   font-weight: 600;
 }
 
+/* Live placement guidance for the active annotation type. Always visible
+   (not hover-gated) so it works for keyboard placement, and it swaps to a
+   "finish / cancel" message while a span is half-placed. Reserves two lines
+   so switching tools doesn't shift the rail. */
+.tool-help {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  min-height: 2.9em;
+}
+
 /* Distance input */
 
 .distance-row {

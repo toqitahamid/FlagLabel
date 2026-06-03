@@ -66,22 +66,51 @@ const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
 
 // The annotation-type selector, in keyboard order (Q W / E R → a 2×2 grid).
 // One entry per kind keeps the rail buttons DRY and in sync with the union.
-const ANNOTATION_TOOLS: { kind: ActiveAnnoType; label: string; title: string }[] =
-  [
-    { kind: "wire_ground", label: "Wire–ground", title: "Wire–ground point (Q)" },
-    { kind: "vertical_span", label: "Vertical", title: "Vertical span (W)" },
-    { kind: "horizontal_span", label: "Horizontal", title: "Horizontal span (E)" },
-    {
-      kind: "flag_to_ground_span",
-      label: "Flag→ground",
-      title: "Flag-to-ground span (R)",
-    },
-  ];
+const ANNOTATION_TOOLS: {
+  kind: ActiveAnnoType;
+  label: string;
+  title: string;
+  hint: string;
+}[] = [
+  {
+    kind: "wire_ground",
+    label: "Wire–ground",
+    title: "Wire–ground point (Q): one click at the wire–ground intersection",
+    hint: "One click at the wire–ground intersection.",
+  },
+  {
+    kind: "vertical_span",
+    label: "Vertical",
+    title: "Vertical span (W): top edge → bottom edge of the flag",
+    hint: "Top → bottom edge of the flag · 2 clicks.",
+  },
+  {
+    kind: "horizontal_span",
+    label: "Horizontal",
+    title: "Horizontal span (E): left edge → right edge of the flag",
+    hint: "Left → right edge of the flag · 2 clicks.",
+  },
+  {
+    kind: "flag_to_ground_span",
+    label: "Flag→ground",
+    title: "Flag-to-ground span (R): flag top → wire base at the ground",
+    hint: "Flag top → wire base at the ground · 2 clicks.",
+  },
+];
 
 // Short label per kind (for the sparkline caption), derived from the tool list
 // so it stays in sync.
 const KIND_LABEL = ANNOTATION_TOOLS.reduce(
   (m, t) => ((m[t.kind] = t.label), m),
+  {} as Record<ActiveAnnoType, string>
+);
+
+// Directional placement hint per kind (for the live rail help line), derived
+// from the tool list so it stays in sync. Endpoints are canonicalized after
+// placement (see canonicalizeSpan), so the arrow is a suggested order for
+// consistency, not a requirement.
+const KIND_HINT = ANNOTATION_TOOLS.reduce(
+  (m, t) => ((m[t.kind] = t.hint), m),
   {} as Record<ActiveAnnoType, string>
 );
 
@@ -2209,6 +2238,11 @@ function App() {
                     </button>
                   ))}
                 </div>
+                <p className="tool-help" aria-live="polite">
+                  {pending.kind === "awaitingSecond"
+                    ? "Click the second point to finish · Esc to cancel"
+                    : KIND_HINT[activeType]}
+                </p>
               </div>
 
               <div className="rail-section">
