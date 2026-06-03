@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import {
   Menu,
@@ -36,6 +35,8 @@ import {
   IDLE as PENDING_IDLE,
 } from "./annotations/pending-span";
 import { findCollision } from "./annotations/collision";
+import { TauriStorageBackend } from "./cloud/tauri-backend";
+import type { ImageItem } from "./cloud/storage-backend";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
@@ -165,17 +166,20 @@ function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
 }
 
-function clickFilename(image: LoadedImage): string {
-  return `${siteFromPath(image.path)}__${stemFromPath(image.path)}.json`;
-}
-
-function expectedJsonPath(image: LoadedImage, clicksDir: string): string {
-  return joinPath(clicksDir, clickFilename(image));
-}
-
 function clickJsonPathFor(imagePath: string, clicksDir: string): string {
   const name = `${siteFromPath(imagePath)}__${stemFromPath(imagePath)}.json`;
   return joinPath(clicksDir, name);
+}
+
+// Ephemeral StorageBackend identity for an image path. Uses App's existing
+// site/basename helpers, so no new path coupling — for the Tauri backend `id`
+// is the absolute path it was always keyed on.
+function itemFromPath(imagePath: string): ImageItem {
+  return {
+    id: imagePath,
+    site: siteFromPath(imagePath),
+    name: pathBasename(imagePath),
+  };
 }
 
 const VIEW_SCALE_MIN = 1;
@@ -884,6 +888,10 @@ function App() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const zoomCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const storeRef = useRef<Store | null>(null);
+  // The persistence seam. A stable instance (not in any effect dep array) whose
+  // folder + clicks dir are kept in sync via setters wherever App sets that
+  // state, so I/O routes through the backend without changing effect timing.
+  const backendRef = useRef<TauriStorageBackend>(new TauriStorageBackend());
 
   // Load persisted settings on mount
   useEffect(() => {
@@ -925,9 +933,9 @@ function App() {
   }, []);
 
   const loadImage = useCallback((path: string): Promise<void> => {
+    setError(null);
+    const url = backendRef.current.resolveImageUrl(itemFromPath(path));
     return new Promise((resolve) => {
-      setError(null);
-      const url = convertFileSrc(path);
       const img = new Image();
       img.onload = () => {
         imgRef.current = img;
@@ -1003,9 +1011,9 @@ function App() {
     });
     if (!selected || Array.isArray(selected)) return;
     try {
-      const images = await invoke<string[]>("list_images_in_dir", {
-        path: selected,
-      });
+      backendRef.current.setFolder(selected);
+      const items = await backendRef.current.listImages();
+      const images = items.map((it) => it.id);
       if (images.length === 0) {
         setError(`No JPG/PNG files in ${selected}`);
         setFolderDir(null);
@@ -1027,19 +1035,17 @@ function App() {
       return;
     }
     let cancelled = false;
+    backendRef.current.setClicksDir(clicksDir);
     (async () => {
       const result: Record<string, Counts> = {};
       for (const path of folderImages) {
         if (cancelled) return;
-        const jsonPath = clickJsonPathFor(path, clicksDir);
         try {
-          const content = await invoke<string | null>("read_text_file", {
-            path: jsonPath,
-          });
-          if (!content) continue;
-          result[path] = countsByTransect(parseAnnotationFile(JSON.parse(content)));
+          const file = await backendRef.current.readAnnotationFile(itemFromPath(path));
+          if (!file) continue;
+          result[path] = countsByTransect(parseAnnotationFile(file));
         } catch (e) {
-          console.error("Failed to read", jsonPath, e);
+          console.error("Failed to read", clickJsonPathFor(path, clicksDir), e);
         }
       }
       if (!cancelled) setImageCounts(result);
@@ -1053,12 +1059,12 @@ function App() {
   useEffect(() => {
     if (!image || !clicksDir) return;
     let cancelled = false;
+    backendRef.current.setClicksDir(clicksDir);
     (async () => {
-      const path = expectedJsonPath(image, clicksDir);
       try {
-        const content = await invoke<string | null>("read_text_file", { path });
-        if (cancelled || !content) return;
-        const anns = parseAnnotationFile(JSON.parse(content));
+        const file = await backendRef.current.readAnnotationFile(itemFromPath(image.path));
+        if (cancelled || !file) return;
+        const anns = parseAnnotationFile(file);
         setClicks(anns);
         setDirty(false);
         setLastSavedAt(Date.now());
@@ -1090,7 +1096,6 @@ function App() {
         await storeRef.current.save();
       }
     }
-    const path = expectedJsonPath(image, dir);
     const meta: FileMeta = {
       site: siteFromPath(image.path),
       image: pathBasename(image.path),
@@ -1098,9 +1103,9 @@ function App() {
       image_h: image.height,
     };
     const data = buildAnnotationFile(meta, clicks, appVersion, new Date().toISOString());
-    const content = JSON.stringify(data, null, 2);
+    backendRef.current.setClicksDir(dir);
     try {
-      await invoke("write_text_file", { path, content });
+      await backendRef.current.writeAnnotationFile(itemFromPath(image.path), data);
       setLastSavedAt(Date.now());
       setDirty(false);
       setImageCounts((prev) => ({
