@@ -236,7 +236,7 @@ export function UploadModal(props: UploadModalProps) {
                 {files.length} file{files.length === 1 ? "" : "s"} selected ·{" "}
                 {formatBytes(totalBytes)}
               </div>
-              {duplicateCount > 0 && (
+              {!result && duplicateCount > 0 && (
                 <div className="upload-dup-note">
                   ⚠ {duplicateCount} file{duplicateCount === 1 ? "" : "s"} already
                   exist{duplicateCount === 1 ? "s" : ""} in this folder and will be
@@ -244,7 +244,11 @@ export function UploadModal(props: UploadModalProps) {
                 </div>
               )}
               {files.map((file) => {
-                const isDup = existingSet.has(file.name);
+                // Only flag duplicates BEFORE uploading. After a successful
+                // upload the gallery has refreshed, so the just-added file now
+                // "exists" — re-flagging it would make a clean upload look like a
+                // conflict.
+                const isDup = !result && existingSet.has(file.name);
                 return (
                   <div className="upload-filerow" key={file.name}>
                     <span className="upload-thumb">
