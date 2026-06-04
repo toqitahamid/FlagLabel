@@ -1413,61 +1413,193 @@ canvas {
 }
 
 .ag-flag {
-  fill: var(--bg-elevated);
-  stroke: var(--border-strong);
+  fill: #f15a2b;
+  stroke: #b8421c;
   stroke-width: 1.5;
+}
+
+/* A single faint crease across the blade so the orange reads as vinyl fabric,
+   not a flat chip. Clipped to the blade by sitting under its own stroke width. */
+.ag-flag-fold {
+  stroke: #c2461d;
+  stroke-width: 1;
+  opacity: 0.5;
+  fill: none;
 }
 
 /* Each annotation defaults to a readable secondary ink — the resting state
    shown when motion is reduced. The pulse dims it, then rolls a green
    highlight through the four types in turn. */
-.ag-anno {
-  color: var(--text-secondary);
-}
-
-.ag-anno line {
-  stroke: currentColor;
-  stroke-width: 2;
+/* One annotation is demonstrated at a time as its real two-click gesture: a
+   start dot drops, a line grows slowly to the end, an end dot lands, the label
+   shows, then the whole thing clears for the next. They cycle Q → W → E → R over
+   one 10s loop — each owns a 25% slot, set by animation-delay. Everything rests
+   at opacity 0, so only the active span is on screen. The line reveals from its
+   (x1,y1) start via stroke-dashoffset, which is what encodes the drag direction
+   (W/R from the top, E from the left). */
+.ag2-line {
+  stroke: var(--accent);
+  stroke-width: 2.5;
   fill: none;
   stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  opacity: 0;
+  animation: ag2-line 10s linear infinite;
 }
 
-.ag-anno circle {
-  fill: currentColor;
+.ag2-start,
+.ag2-end {
+  fill: var(--accent);
   stroke: none;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.ag2-start {
+  animation: ag2-start 10s ease-out infinite;
+}
+.ag2-end {
+  animation: ag2-end 10s ease-out infinite;
 }
 
-.ag-anno text {
-  fill: currentColor;
+.ag2-label {
+  fill: var(--accent);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
+  opacity: 0;
+  animation: ag2-label 10s linear infinite;
 }
 
-.ag-anno--q {
-  animation: ag-pulse 6.4s linear infinite;
+/* Stagger the four slots in listed order. `> *` carries the delay to every
+   animated child of the group so a span's dots, line, and label stay in sync. */
+.ag2--q > * {
+  animation-delay: 0s;
 }
-.ag-anno--w {
-  animation: ag-pulse 6.4s linear infinite 1.6s;
+.ag2--w > * {
+  animation-delay: 2.5s;
 }
-.ag-anno--e {
-  animation: ag-pulse 6.4s linear infinite 3.2s;
+.ag2--e > * {
+  animation-delay: 5s;
 }
-.ag-anno--r {
-  animation: ag-pulse 6.4s linear infinite 4.8s;
+.ag2--r > * {
+  animation-delay: 7.5s;
 }
 
-@keyframes ag-pulse {
-  0%,
-  28%,
-  100% {
-    color: var(--text-tertiary);
-    opacity: 0.5;
+/* The first click. */
+@keyframes ag2-start {
+  0% {
+    opacity: 0;
+    transform: scale(0.2);
   }
-  6%,
-  18% {
-    color: var(--accent);
+  2% {
     opacity: 1;
+    transform: scale(1.4);
+  }
+  4% {
+    transform: scale(1);
+  }
+  22% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  25.01%,
+  100% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+/* The line growing slowly from start to end. */
+@keyframes ag2-line {
+  0%,
+  4% {
+    opacity: 1;
+    stroke-dashoffset: 100;
+  }
+  17% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  22% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  25% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+  25.01%,
+  100% {
+    opacity: 0;
+    stroke-dashoffset: 100;
+  }
+}
+
+/* The second click, landing once the line arrives. */
+@keyframes ag2-end {
+  0%,
+  17% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+  19% {
+    opacity: 1;
+    transform: scale(1.4);
+  }
+  20% {
+    transform: scale(1);
+  }
+  22% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  25.01%,
+  100% {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes ag2-label {
+  0%,
+  6% {
+    opacity: 0;
+  }
+  9% {
+    opacity: 1;
+  }
+  22% {
+    opacity: 1;
+  }
+  25% {
+    opacity: 0;
+  }
+  25.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no draw cycle. Show all four spans statically so the figure
+   still teaches what each tool marks; the textual list carries direction. */
+@media (prefers-reduced-motion: reduce) {
+  .ag2-line {
+    opacity: 1;
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+  .ag2-start,
+  .ag2-end,
+  .ag2-label {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }
 

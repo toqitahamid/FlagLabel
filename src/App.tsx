@@ -405,7 +405,7 @@ function AnnotationGuide() {
       className="annotation-guide"
       viewBox="0 0 260 184"
       role="img"
-      aria-label="A flag on a wire. The four annotation types: Q marks the wire–ground point, W spans the flag top to bottom, E spans it left to right, and R spans from the flag top down to the wire base at the ground."
+      aria-label="An orange survey flag on a thin wire stake. The four annotation types: Q marks the wire–ground point, W spans the flag top to bottom, E spans it left to right, and R spans from the flag top down to the wire base at the ground."
     >
       {/* ground line + texture */}
       <line className="ag-ground" x1="20" y1="150" x2="240" y2="150" />
@@ -419,51 +419,91 @@ function AnnotationGuide() {
           y2="158"
         />
       ))}
-      {/* wire (solid above ground, dashed where buried) */}
-      <line className="ag-wire" x1="130" y1="58" x2="130" y2="150" />
+      {/* wire stake (solid above ground, dashed where driven in) — runs up the
+          flag's left/hoist edge, the way a survey flag is actually attached */}
+      <line className="ag-wire" x1="120" y1="30" x2="120" y2="150" />
       <line
         className="ag-wire ag-wire--buried"
-        x1="130"
+        x1="120"
         y1="150"
-        x2="130"
-        y2="163"
+        x2="120"
+        y2="164"
       />
-      {/* flag body */}
-      <rect className="ag-flag" x="105" y="24" width="50" height="34" rx="2" />
+      {/* flag blade — a blaze-orange vinyl square fixed to the stake top, flaring
+          out to the fly side. Drawn over the wire so the hoist edge sits on it. */}
+      <rect
+        className="ag-flag"
+        x="120"
+        y="30"
+        width="50"
+        height="40"
+        rx="1.5"
+      />
+      <path className="ag-flag-fold" d="M120 34 Q150 50 168 68" />
 
-      {/* R — flag-to-ground span (drawn first so the others read above it) */}
-      <g className="ag-anno ag-anno--r">
-        <line x1="150" y1="24" x2="150" y2="150" />
-        <line x1="145" y1="24" x2="155" y2="24" />
-        <line x1="145" y1="150" x2="155" y2="150" />
-        <text x="160" y="100">R</text>
+      {/* The four annotations are demonstrated ONE AT A TIME, each as the actual
+          two-click gesture: a start dot drops (first click), a line grows slowly
+          to the end, an end dot lands (second click). Only the active one is
+          visible; they cycle Q → W → E → R. Geometry encodes drag direction:
+          a line reveals from its (x1,y1) start, so W/R start at the top and E at
+          the left. */}
+
+      {/* Q — wire–ground point: a single click, so it just drops a dot. */}
+      <g className="ag2 ag2--q">
+        <circle className="ag2-start" cx="120" cy="150" r="4.5" />
+        <text className="ag2-label" x="120" y="176" textAnchor="middle">
+          Q
+        </text>
       </g>
 
-      {/* W — vertical flag span */}
-      <g className="ag-anno ag-anno--w">
-        <line x1="113" y1="24" x2="113" y2="58" />
-        <line x1="108" y1="24" x2="118" y2="24" />
-        <line x1="108" y1="58" x2="118" y2="58" />
-        <text x="98" y="44" textAnchor="end">
+      {/* W — vertical flag span, top → bottom, just off the fly (right) edge. */}
+      <g className="ag2 ag2--w">
+        <line
+          className="ag2-line"
+          x1="178"
+          y1="30"
+          x2="178"
+          y2="70"
+          pathLength={100}
+        />
+        <circle className="ag2-start" cx="178" cy="30" r="4" />
+        <circle className="ag2-end" cx="178" cy="70" r="4" />
+        <text className="ag2-label" x="186" y="53">
           W
         </text>
       </g>
 
-      {/* E — horizontal flag span */}
-      <g className="ag-anno ag-anno--e">
-        <line x1="105" y1="46" x2="155" y2="46" />
-        <line x1="105" y1="41" x2="105" y2="51" />
-        <line x1="155" y1="41" x2="155" y2="51" />
-        <text x="130" y="74" textAnchor="middle">
+      {/* E — horizontal flag span, left → right, just above the top edge. */}
+      <g className="ag2 ag2--e">
+        <line
+          className="ag2-line"
+          x1="120"
+          y1="20"
+          x2="170"
+          y2="20"
+          pathLength={100}
+        />
+        <circle className="ag2-start" cx="120" cy="20" r="4" />
+        <circle className="ag2-end" cx="170" cy="20" r="4" />
+        <text className="ag2-label" x="145" y="11" textAnchor="middle">
           E
         </text>
       </g>
 
-      {/* Q — wire–ground point */}
-      <g className="ag-anno ag-anno--q">
-        <circle cx="130" cy="150" r="4.5" />
-        <text x="130" y="178" textAnchor="middle">
-          Q
+      {/* R — flag-to-ground span, flag top → wire base, left of the wire. */}
+      <g className="ag2 ag2--r">
+        <line
+          className="ag2-line"
+          x1="104"
+          y1="30"
+          x2="104"
+          y2="150"
+          pathLength={100}
+        />
+        <circle className="ag2-start" cx="104" cy="30" r="4" />
+        <circle className="ag2-end" cx="104" cy="150" r="4" />
+        <text className="ag2-label" x="96" y="94" textAnchor="end">
+          R
         </text>
       </g>
     </svg>
