@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.0
+
+### Web dataset management (admin)
+- The shared web app gets an explorer-style sidebar for organizing the dataset: create your own folders (one per camera/site) right in the UI, then add one or many images to a folder — no more uploading a whole folder at once and inheriting its name.
+- New images are added through a drag-and-drop **Add images** modal, with per-file duplicate detection and live upload progress.
+- Right-click any folder or image to **rename** or **delete** it. Deletes are verified against the backend so a silently-blocked delete can no longer look like it succeeded.
+- A VS Code-style inline "new folder" field (just type and press Enter) and an instrument-style header with a completion meter.
+
+### Onboarding redesign
+- The intro figure now shows a blaze-orange survey flag on a wire stake, matching the real flags, instead of a generic gray box.
+- Each annotation type is demonstrated one at a time as its actual two-click gesture — a dot drops at the start, a line draws slowly in the drag direction (vertical and flag-to-ground top→bottom, horizontal left→right), and a dot lands at the end. A single click pops for the wire-ground point.
+- Clearer guidance: flags sit on one of three transect lines (pick `1`/`2`/`3` before marking), and each line holds 15 flags 1 m apart, so set both the transect and the distance before choosing a tool.
+
+### Web polish
+- A titlebar **? Help** button and an empty-state shortcuts link, so the keyboard reference is reachable without a native menu bar.
+- **Open file** / **Open folder** (native OS dialogs) are now hidden on the web build, where images come from the explorer instead.
+
+### Export
+- Downloading a single image's annotations now uses just the image's own name (`IMG_0001.json`) with no folder prefix.
+- The full-dataset ZIP organizes each file under its folder (`<camera>/<image>.json`), so the archive unzips into one folder per camera. File contents are unchanged.
+
 ## v0.2.1
 
 ### Annotation guidance
