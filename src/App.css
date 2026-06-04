@@ -283,37 +283,88 @@ body,
 
 /* ---------- Web explorer (folders / sites tree) ---------- */
 
-/* Compact icon toolbar in the sidebar header (VS Code-style). */
-.folder-actions {
+/* Sidebar header: title row + a thin completion meter. */
+.folder-head-top {
   display: flex;
-  gap: 2px;
-  margin-top: 8px;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.icon-btn {
-  width: 26px;
-  height: 26px;
+.folder-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-progress {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.folder-progress-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.folder-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.folder-progress-count {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.folder-progress-count .mono {
+  color: var(--text-secondary);
+}
+
+/* Web admin action bar: legible text buttons, right-aligned. Replaces the bare
+   icon toolbar (no "Shared dataset" label — it's always the shared dataset). */
+.folder-head-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.folder-action-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  background: transparent;
+  gap: 5px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
   color: var(--text-secondary);
+  background: transparent;
+  border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background-color 80ms ease, color 80ms ease;
 }
 
-.icon-btn:hover {
+.folder-action-btn:hover {
   background: var(--bg-elevated);
   color: var(--text-primary);
 }
 
-.icon-btn svg {
-  width: 15px;
-  height: 15px;
+.folder-action-btn svg {
+  width: 13px;
+  height: 13px;
 }
 
 .tree {
@@ -356,7 +407,10 @@ body,
   width: 15px;
   height: 15px;
   flex-shrink: 0;
-  color: var(--accent);
+  /* Neutral, not green: the folder glyph is chrome. Per the Rationed Green Rule,
+     green is reserved for action / current selection / saved — never decoration.
+     The only green in the tree is the 2px active-item left border. */
+  color: var(--text-secondary);
 }
 
 .folder-name {
@@ -1831,24 +1885,41 @@ canvas {
   color: var(--text-secondary);
 }
 
+/* Web auth wrapper: a compact identity strip stacked ABOVE the app, never
+   floating over the titlebar (the old fixed top-right bar collided with the
+   Undo/Save/Download/Open actions once an image opened). */
 .auth-shell {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .auth-bar {
-  position: fixed;
-  top: 8px;
-  right: 12px;
-  z-index: 1000;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  height: 30px;
+  padding: 0 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+/* Inside the auth shell the app fills the remaining height instead of a hard
+   100vh (which would push it under the strip). Desktop has no auth shell, so
+   its `.app { height: 100vh }` is unaffected. */
+.auth-shell > .app {
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .auth-bar-email {
-  max-width: 220px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

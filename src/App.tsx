@@ -2992,61 +2992,83 @@ function App() {
         {(isTauri() ? folderImages.length > 0 : true) && (
           <aside className="folder-sidebar">
             <div className="folder-header">
-              <div className="folder-path" title={folderDir ?? ""}>
-                {isTauri()
-                  ? folderDir
-                    ? pathBasename(folderDir)
-                    : ""
-                  : "Shared dataset"}
-              </div>
               {isTauri() ? (
-                <div className="folder-meta">
-                  <span className="mono">
-                    {
-                      folderImages.filter((p) => {
-                        const c =
-                          image?.path === p
-                            ? countsByTransect(clicks)
-                            : imageCounts[p];
-                        return c && c.L + c.C + c.R > 0;
-                      }).length
-                    }
+                // Desktop: the open folder's name (no actions — those are web-only).
+                <div className="folder-head-top">
+                  <span className="folder-title" title={folderDir ?? ""}>
+                    {folderDir ? pathBasename(folderDir) : ""}
                   </span>
-                  <span> labeled / </span>
-                  <span className="mono">{folderImages.length}</span>
-                  <span> total</span>
                 </div>
               ) : (
-                // Web: dataset-wide team progress from the summary columns (#16).
-                <div className="folder-meta">
-                  <span className="mono">{progressSummary.overall.annotated}</span>
-                  <span> annotated / </span>
-                  <span className="mono">{progressSummary.overall.total}</span>
-                  <span> total</span>
-                </div>
+                isAdmin && (
+                  // Web admin: a legible text-button action bar. The redundant
+                  // "Shared dataset" label is dropped — it's always the shared
+                  // dataset, so naming it was noise.
+                  <div className="folder-head-actions">
+                    <button
+                      type="button"
+                      className="folder-action-btn"
+                      onClick={openNewFolder}
+                      title="New folder"
+                    >
+                      <FolderPlusIcon />
+                      New folder
+                    </button>
+                    <button
+                      type="button"
+                      className="folder-action-btn"
+                      onClick={handleDownloadAll}
+                      title="Download all annotations as a ZIP of per-image JSON files"
+                    >
+                      <DownloadIcon />
+                      ZIP
+                    </button>
+                  </div>
+                )
               )}
-              {!isTauri() && isAdmin && (
-                <div className="folder-actions">
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={openNewFolder}
-                    title="New folder"
-                    aria-label="New folder"
-                  >
-                    <FolderPlusIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={handleDownloadAll}
-                    title="Download all annotations as a ZIP of per-image JSON files"
-                    aria-label="Download all annotations (ZIP)"
-                  >
-                    <DownloadIcon />
-                  </button>
-                </div>
-              )}
+              {(() => {
+                // Completion readout: a thin meter + tabular count. Desktop counts
+                // locally-labeled images; web reads the shared-dataset summary.
+                const annotated = isTauri()
+                  ? folderImages.filter((p) => {
+                      const c =
+                        image?.path === p
+                          ? countsByTransect(clicks)
+                          : imageCounts[p];
+                      return c && c.L + c.C + c.R > 0;
+                    }).length
+                  : progressSummary.overall.annotated;
+                const total = isTauri()
+                  ? folderImages.length
+                  : progressSummary.overall.total;
+                const pct = total > 0 ? (annotated / total) * 100 : 0;
+                return (
+                  <div className="folder-progress">
+                    <div
+                      className="folder-progress-bar"
+                      role="progressbar"
+                      aria-valuenow={annotated}
+                      aria-valuemin={0}
+                      aria-valuemax={total}
+                      aria-label={`${annotated} of ${total} ${
+                        isTauri() ? "labeled" : "annotated"
+                      }`}
+                    >
+                      <div
+                        className="folder-progress-fill"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span
+                      className="folder-progress-count"
+                      title={isTauri() ? "labeled / total" : "annotated / total"}
+                    >
+                      <span className="mono">{annotated}</span>/
+                      <span className="mono">{total}</span>
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
 
             {!isTauri() && newFolderOpen && (
