@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   serializeAnnotationFile,
   exportEntryName,
+  zipEntryPath,
   buildZipEntries,
   canonicalizeAnnotationFile,
 } from "./export";
@@ -54,9 +55,9 @@ describe("serializeAnnotationFile", () => {
 // ─── exportEntryName ─────────────────────────────────────────────────────────
 
 describe("exportEntryName", () => {
-  it("cam02 + IMG_0001.JPG → cam02__IMG_0001.json", () => {
+  it("IMG_0001.JPG → IMG_0001.json (no site prefix)", () => {
     const file = buildAnnotationFile(META, ANNS, "0.2.1", "2026-06-03T00:00:00.000Z");
-    expect(exportEntryName(file)).toBe("cam02__IMG_0001.json");
+    expect(exportEntryName(file)).toBe("IMG_0001.json");
   });
 
   it("strips .jpeg extension", () => {
@@ -66,7 +67,7 @@ describe("exportEntryName", () => {
       "0.2.1",
       "2026-06-03T00:00:00.000Z"
     );
-    expect(exportEntryName(file)).toBe("cam01__photo.json");
+    expect(exportEntryName(file)).toBe("photo.json");
   });
 
   it("strips .png extension", () => {
@@ -76,7 +77,7 @@ describe("exportEntryName", () => {
       "0.2.1",
       "2026-06-03T00:00:00.000Z"
     );
-    expect(exportEntryName(file)).toBe("camX__frame_042.json");
+    expect(exportEntryName(file)).toBe("frame_042.json");
   });
 
   it("strips lowercase .jpg extension", () => {
@@ -86,7 +87,21 @@ describe("exportEntryName", () => {
       "0.2.1",
       "2026-06-03T00:00:00.000Z"
     );
-    expect(exportEntryName(file)).toBe("siteA__IMG_0001.json");
+    expect(exportEntryName(file)).toBe("IMG_0001.json");
+  });
+});
+
+// ─── zipEntryPath ────────────────────────────────────────────────────────────
+
+describe("zipEntryPath", () => {
+  it("nests the file under its site folder: sample/IMG_0001.json", () => {
+    const file = buildAnnotationFile(
+      { site: "sample", image: "IMG_0001.JPG", image_w: 4000, image_h: 3000 },
+      [],
+      "0.2.1",
+      "2026-06-03T00:00:00.000Z"
+    );
+    expect(zipEntryPath(file)).toBe("sample/IMG_0001.json");
   });
 });
 
@@ -116,9 +131,9 @@ describe("buildZipEntries", () => {
     const entries = buildZipEntries([fileA, fileB, fileC]);
 
     expect(entries).toHaveLength(3);
-    expect(entries[0].name).toBe("siteA__A.json");
-    expect(entries[1].name).toBe("siteB__B.json");
-    expect(entries[2].name).toBe("siteA__C.json");
+    expect(entries[0].name).toBe("siteA/A.json");
+    expect(entries[1].name).toBe("siteB/B.json");
+    expect(entries[2].name).toBe("siteA/C.json");
     expect(entries[0].content).toBe(serializeAnnotationFile(fileA));
     expect(entries[1].content).toBe(serializeAnnotationFile(fileB));
     expect(entries[2].content).toBe(serializeAnnotationFile(fileC));
@@ -141,7 +156,7 @@ describe("empty annotation files", () => {
     );
     const entries = buildZipEntries([emptyFile]);
     expect(entries).toHaveLength(1);
-    expect(entries[0].name).toBe("camEmpty__shot.json");
+    expect(entries[0].name).toBe("camEmpty/shot.json");
   });
 });
 
@@ -181,7 +196,7 @@ describe("canonicalizeAnnotationFile", () => {
     }
     const entries = buildZipEntries([shuffled as typeof desktop]);
     expect(entries[0].content).toBe(serializeAnnotationFile(desktop));
-    expect(entries[0].name).toBe("cam02__IMG_0001.json");
+    expect(entries[0].name).toBe("cam02/IMG_0001.json");
   });
 });
 

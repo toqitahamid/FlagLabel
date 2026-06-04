@@ -520,7 +520,7 @@ function TransectGuide() {
       className="transect-guide"
       viewBox="0 0 220 150"
       role="img"
-      aria-label="Three sampling lines fanning out from the camera: Left in red, Center in amber, Right in blue. Keys 1, 2, 3 select them, and the chosen transect's color tags every annotation."
+      aria-label="The three transect lines a flag can stand on: Left in red, Center in amber, Right in blue. Keys 1, 2, 3 select which line a flag is on, and the chosen color tags every mark."
     >
       {/* camera viewpoint */}
       <path className="tg-camera" d="M104 141 L116 141 L110 132 Z" />
@@ -561,10 +561,10 @@ function GuideFigures() {
       <figure className="intro-figure">
         <TransectGuide />
         <figcaption className="intro-figcaption">
-          <b>Transect</b> — which line. <kbd>1</kbd>{" "}
-          <span className="t-l">L</span> · <kbd>2</kbd>{" "}
+          <b>Transect</b> — which of the three lines a flag stands on.{" "}
+          <kbd>1</kbd> <span className="t-l">L</span> · <kbd>2</kbd>{" "}
           <span className="t-c">C</span> · <kbd>3</kbd>{" "}
-          <span className="t-r">R</span>. Its color tags every mark.
+          <span className="t-r">R</span>; the color tags every mark.
         </figcaption>
       </figure>
       <figure className="intro-figure">
@@ -610,11 +610,12 @@ function KeyboardHelp({
         </div>
 
         <p className="help-intro">
-          Click on the wire-ground intersection (base) of each flag — not the
-          flag head. Pick a transect and distance from the right rail, then
-          click in the main image or the magnified zoom panel. Auto-advance
-          fills distances 1 through 15 in sequence. Files auto-save 5 seconds
-          after the last change once a clicks folder is chosen.
+          The flags stand along three transect lines (L / C / R), 15 to a line
+          and 1 m apart. For each flag, pick its transect and distance from the
+          right rail, then choose a tool and click in the main image or the
+          magnified zoom panel. Auto-advance fills distances 1 through 15 in
+          sequence. Files auto-save 5 seconds after the last change once a
+          clicks folder is chosen.
         </p>
 
         <div className="help-guide">
@@ -1475,9 +1476,10 @@ function App() {
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }, []);
 
-  // Download the CURRENT image's annotation JSON as `<site>__<stem>.json`.
-  // Prefer the persisted blob (so the download matches exactly what's stored);
-  // fall back to building from the in-memory clicks if the row has no data yet.
+  // Download the CURRENT image's annotation JSON as `<stem>.json` (just the
+  // original image name — no site prefix). Prefer the persisted blob (so the
+  // download matches what's stored); fall back to building from the in-memory
+  // clicks if the row has no data yet.
   const handleDownloadCurrent = useCallback(async () => {
     if (isTauri() || !image) return;
     try {
@@ -3013,21 +3015,42 @@ function App() {
                 </button>
               </>
             )}
-            <span className="title-divider" aria-hidden />
-            <button
-              className="title-btn"
-              onClick={handleOpen}
-              title="Open image (⌘O)"
-            >
-              Open file
-            </button>
-            <button
-              className="title-btn"
-              onClick={handleOpenFolder}
-              title="Open folder (⌘⇧O)"
-            >
-              Open folder
-            </button>
+            {/* Open file / Open folder fire native OS dialogs — desktop only.
+                On web, images come from the explorer + upload modal instead. */}
+            {isTauri() && (
+              <>
+                <span className="title-divider" aria-hidden />
+                <button
+                  className="title-btn"
+                  onClick={handleOpen}
+                  title="Open image (⌘O)"
+                >
+                  Open file
+                </button>
+                <button
+                  className="title-btn"
+                  onClick={handleOpenFolder}
+                  title="Open folder (⌘⇧O)"
+                >
+                  Open folder
+                </button>
+              </>
+            )}
+            {/* Web has no native menu bar, so the keyboard-help overlay would be
+                unreachable except via the (undiscoverable) ? key. Surface it. */}
+            {!isTauri() && (
+              <>
+                <span className="title-divider" aria-hidden />
+                <button
+                  className="title-btn"
+                  onClick={() => setShowHelp(true)}
+                  title="Keyboard shortcuts & guide (?)"
+                  aria-label="Keyboard shortcuts and guide"
+                >
+                  <kbd>?</kbd> Help
+                </button>
+              </>
+            )}
           </div>
         )}
       </header>
@@ -3379,9 +3402,15 @@ function App() {
           ) : error ? (
             <div className="state-center">
               <div className="state-error">Could not read {error}</div>
-              <button className="btn" onClick={handleOpen}>
-                Try another image
-              </button>
+              {isTauri() ? (
+                <button className="btn" onClick={handleOpen}>
+                  Try another image
+                </button>
+              ) : (
+                <span className="hint">
+                  Pick another image from the explorer on the left.
+                </span>
+              )}
             </div>
           ) : (
             <div className="state-center">
@@ -3417,8 +3446,10 @@ function App() {
                   </li>
                 </ul>
                 <p className="intro-flow">
-                  Set the distance <kbd>↑</kbd>
-                  <kbd>↓</kbd>, then click to place.
+                  Each transect carries 15 flags, 1 m apart. For every flag,
+                  pick its transect <kbd>1</kbd>–<kbd>3</kbd> and its distance{" "}
+                  <kbd>↑</kbd>
+                  <kbd>↓</kbd> (1–15) first, then choose a tool and click.
                 </p>
                 {isTauri() ? (
                   <>
@@ -3462,6 +3493,15 @@ function App() {
                         </button>
                       </div>
                     )}
+                    <span className="hint">
+                      <button
+                        className="link"
+                        onClick={() => setShowHelp(true)}
+                        type="button"
+                      >
+                        <kbd>?</kbd> shortcuts &amp; guide
+                      </button>
+                    </span>
                   </>
                 )}
               </div>

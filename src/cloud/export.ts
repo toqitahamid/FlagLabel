@@ -44,25 +44,38 @@ export function serializeAnnotationFile(file: AnnotationFile): string {
   return JSON.stringify(file, null, 2);
 }
 
+/** The image filename without its extension, e.g. "IMG_0001.JPG" → "IMG_0001". */
+export function imageStem(file: AnnotationFile): string {
+  return file.image.replace(/\.[^.]+$/, "");
+}
+
 /**
- * Returns the export entry filename for an AnnotationFile.
+ * Filename for a SINGLE-image JSON download: just the original image name with a
+ * `.json` extension — no `site__` prefix. The site is already implied by the
+ * folder the user is downloading from.
  *
- * Mirrors the desktop's `clickFilename` / `stemFromPath` logic:
- *   `${site}__${imageWithoutExtension}.json`
- *
- * e.g. site="cam02", image="IMG_0001.JPG" → "cam02__IMG_0001.json"
+ * e.g. site="sample", image="IMG_0001.JPG" → "IMG_0001.json"
  */
 export function exportEntryName(file: AnnotationFile): string {
-  // Remove the last extension (e.g. ".JPG", ".jpeg", ".png")
-  const stem = file.image.replace(/\.[^.]+$/, "");
-  return `${file.site}__${stem}.json`;
+  return `${imageStem(file)}.json`;
+}
+
+/**
+ * Path for a file inside the dataset ZIP: nested under its site folder so the
+ * archive mirrors the dataset's folder structure (one folder per site/camera).
+ *
+ * e.g. site="sample", image="IMG_0001.JPG" → "sample/IMG_0001.json"
+ */
+export function zipEntryPath(file: AnnotationFile): string {
+  return `${file.site}/${imageStem(file)}.json`;
 }
 
 /**
  * Builds the list of ZIP entries for a collection of AnnotationFiles.
  *
  * Returns one `{ name, content }` pair per file, in the same order as the
- * input array. The actual zipping is done by the caller.
+ * input array. Each `name` is a `site/stem.json` path so the archive unzips into
+ * one folder per site/camera. The actual zipping is done by the caller.
  *
  * A file with all annotation arrays empty is still included — clearing all
  * annotations on a previously-annotated image is a legitimate save state.
@@ -77,7 +90,7 @@ export function buildZipEntries(
   return files.map((file) => {
     const canonical = canonicalizeAnnotationFile(file);
     return {
-      name: exportEntryName(canonical),
+      name: zipEntryPath(canonical),
       content: serializeAnnotationFile(canonical),
     };
   });
