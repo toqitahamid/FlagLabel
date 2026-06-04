@@ -1630,9 +1630,17 @@ function App() {
   }, [newFolderName, submitNewFolder, closeNewFolder]);
 
   // The "+" / "Add images" affordance opens the drag-drop UploadModal for a site.
-  const triggerAddImages = useCallback((site: string) => {
-    setUploadModalSite(site);
-  }, []);
+  // Kick a gallery refresh so the modal's duplicate detection reflects current DB
+  // state, not a possibly-stale folderImages (e.g. right after a delete+recreate
+  // of the same folder name). The modal opens instantly; `existingNames` updates
+  // reactively when the refresh resolves.
+  const triggerAddImages = useCallback(
+    (site: string) => {
+      setUploadModalSite(site);
+      void refreshGallery();
+    },
+    [refreshGallery],
+  );
 
   // Tear down the active image without saving: nulls it (which releases the edit
   // lock via the useImageLock cleanup keyed on imageId) and clears the dirty flag

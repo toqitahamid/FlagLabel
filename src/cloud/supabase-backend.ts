@@ -369,14 +369,23 @@ export class SupabaseStorageBackend implements StorageBackend {
         `SupabaseStorageBackend.deleteImage failed for "${site}/${name}": ${storageError.message}`,
       );
     }
-    const { error: rowError } = await supabase
+    // `.select()` returns the deleted rows. A bare delete reports success even
+    // when RLS matched nothing (e.g. a non-admin call), so verify a row actually
+    // went — otherwise the UI would show "deleted" while the row survives.
+    const { data: deleted, error: rowError } = await supabase
       .from("annotations")
       .delete()
       .eq("site", site)
-      .eq("image_name", name);
+      .eq("image_name", name)
+      .select("image_name");
     if (rowError) {
       throw new Error(
         `SupabaseStorageBackend.deleteImage failed for "${site}/${name}": ${rowError.message}`,
+      );
+    }
+    if (!deleted || deleted.length === 0) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteImage removed no row for "${site}/${name}" (already gone, or not permitted).`,
       );
     }
   }
@@ -408,22 +417,33 @@ export class SupabaseStorageBackend implements StorageBackend {
         );
       }
     }
-    const { error: rowError } = await supabase
+    const { data: delRows, error: rowError } = await supabase
       .from("annotations")
       .delete()
-      .eq("site", name);
+      .eq("site", name)
+      .select("image_name");
     if (rowError) {
       throw new Error(
         `SupabaseStorageBackend.deleteSite failed for "${name}": ${rowError.message}`,
       );
     }
-    const { error: siteError } = await supabase
+    const { data: delSite, error: siteError } = await supabase
       .from("sites")
       .delete()
-      .eq("name", name);
+      .eq("name", name)
+      .select("name");
     if (siteError) {
       throw new Error(
         `SupabaseStorageBackend.deleteSite failed for "${name}": ${siteError.message}`,
+      );
+    }
+    // A folder exists via image rows, a `sites` row, or both. If the delete
+    // removed neither, nothing actually happened (RLS no-op or already gone) —
+    // surface it instead of reporting a phantom success.
+    const removed = (delRows?.length ?? 0) + (delSite?.length ?? 0);
+    if (removed === 0) {
+      throw new Error(
+        `SupabaseStorageBackend.deleteSite removed nothing for "${name}" (already gone, or not permitted).`,
       );
     }
   }
