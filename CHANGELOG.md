@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1
+
+### Fixes
+- The zoom panel's center crosshair was a faint single-color line that disappeared over pale subjects (a white flag, snow, light leaves). It now draws as a dark halo under a bright core, with a small gap at the exact center, so it stays clearly visible on any background.
+
 ## v0.3.0
 
 ### Web dataset management (admin)
