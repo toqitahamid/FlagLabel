@@ -1,0 +1,530 @@
+/* ============================================================================
+   Onboarding: welcome walkthrough modal, getting-started checklist, and the
+   product tour. Web-only surfaces. Uses the global design tokens from App.css.
+   ============================================================================ */
+
+/* semantic z-scale for the onboarding layer (above the app, below nothing) */
+:root {
+  --z-ob-checklist: 80;
+  --z-ob-tour-scrim: 120;
+  --z-ob-tour-ring: 122;
+  --z-ob-tour-tip: 124;
+  --z-ob-backdrop: 140;
+}
+
+/* ---------- Welcome walkthrough modal ---------- */
+
+.ob-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-ob-backdrop);
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: ob-fade 140ms ease-out;
+}
+
+.ob-modal {
+  width: min(440px, 100%);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 12px 24px rgba(0, 0, 0, 0.35), 0 24px 60px rgba(0, 0, 0, 0.45);
+  padding: 20px 24px 18px;
+  color: var(--text-primary);
+  animation: ob-rise 200ms var(--ease-out);
+}
+
+.ob-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.ob-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.ob-dots i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  transition: width 160ms var(--ease-out), background-color 160ms ease;
+}
+
+.ob-dots i.on {
+  width: 18px;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+.ob-skip {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 2px;
+  transition: color 80ms ease;
+}
+
+.ob-skip:hover {
+  color: var(--text-secondary);
+}
+
+.ob-fig {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin-bottom: 16px;
+  min-height: 128px;
+}
+
+.ob-fig .annotation-guide,
+.ob-fig .transect-guide {
+  max-width: 200px;
+}
+
+/* The recap step shows both schematics; keep them from overflowing the modal. */
+.ob-fig .intro-figures {
+  gap: 20px;
+}
+
+.ob-fig .intro-figure {
+  max-width: 150px;
+  gap: 8px;
+}
+
+.ob-title {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+  text-wrap: balance;
+}
+
+.ob-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  max-width: 60ch;
+}
+
+.ob-body kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.ob-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.ob-step {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.ob-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ob-back {
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 80ms ease, color 80ms ease;
+}
+
+.ob-back:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.ob-secondary {
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 80ms ease, color 80ms ease;
+}
+
+.ob-secondary:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.ob-next {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #04130d;
+  cursor: pointer;
+  transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.ob-next:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* ---------- Getting-started checklist ---------- */
+
+.ob-checklist {
+  position: fixed;
+  z-index: var(--z-ob-checklist);
+  right: 376px; /* clear of the 360px right rail + its border */
+  bottom: 40px;
+  width: 280px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: ob-rise 220ms var(--ease-out);
+}
+
+.ob-cl-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.ob-cl-head .t {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ob-cl-head .c {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.ob-cl-bar {
+  height: 3px;
+  background: var(--bg-elevated);
+  margin: 0 14px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ob-cl-bar i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 240ms var(--ease-out);
+}
+
+.ob-cl-list {
+  list-style: none;
+  margin: 8px 0 4px;
+  padding: 0;
+}
+
+.ob-cl-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.ob-cl-list li .box {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--bg-app);
+}
+
+.ob-cl-list li.done {
+  color: var(--text-tertiary);
+}
+
+.ob-cl-list li.done .lbl {
+  text-decoration: line-through;
+}
+
+.ob-cl-list li.done .box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ob-cl-list li.now {
+  color: var(--text-primary);
+}
+
+.ob-cl-list li.now .box {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(52, 163, 130, 0.18);
+}
+
+.ob-cl-list li .lbl kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 0 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.ob-cl-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 12px 10px;
+}
+
+.ob-cl-foot button {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  transition: color 80ms ease;
+}
+
+.ob-cl-foot button:hover {
+  color: var(--text-secondary);
+}
+
+/* ---------- Product tour (coachmark + spotlight) ---------- */
+
+.ob-tour-scrim {
+  position: fixed;
+  z-index: var(--z-ob-tour-scrim);
+  background: rgba(6, 6, 8, 0.62);
+  animation: ob-fade 160ms ease-out;
+}
+
+.ob-tour-ring {
+  position: fixed;
+  z-index: var(--z-ob-tour-ring);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: 0 0 0 4px rgba(52, 163, 130, 0.25), 0 0 22px rgba(52, 163, 130, 0.35);
+  pointer-events: none;
+  transition: top 200ms var(--ease-out), left 200ms var(--ease-out),
+    width 200ms var(--ease-out), height 200ms var(--ease-out);
+}
+
+.ob-tip {
+  position: fixed;
+  z-index: var(--z-ob-tour-tip);
+  width: 256px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.5);
+  padding: 13px 14px;
+  animation: ob-rise 180ms var(--ease-out);
+}
+
+.ob-tip-h {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.ob-tip-n {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #04130d;
+  background: var(--accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.ob-tip-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.ob-tip-body kbd {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.ob-tip-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.ob-tip-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.ob-tip-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.ob-tip-dots i.on {
+  background: var(--accent);
+}
+
+.ob-tip-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ob-tip-skip {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.ob-tip-skip:hover {
+  color: var(--text-secondary);
+}
+
+.ob-tip-next {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #04130d;
+  cursor: pointer;
+}
+
+.ob-tip-next:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* ---------- Replay controls in the help overlay ---------- */
+
+.ob-replay {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 18px;
+}
+
+.ob-replay button {
+  font: inherit;
+  font-size: 11px;
+  padding: 6px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 80ms ease, color 80ms ease;
+}
+
+.ob-replay button:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+@keyframes ob-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ob-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-backdrop,
+  .ob-modal,
+  .ob-checklist,
+  .ob-tip,
+  .ob-tour-scrim {
+    animation: none;
+  }
+  .ob-tour-ring,
+  .ob-cl-bar i,
+  .ob-dots i {
+    transition: none;
+  }
+}

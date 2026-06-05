@@ -11,6 +11,19 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { Store } from "@tauri-apps/plugin-store";
 import { check } from "@tauri-apps/plugin-updater";
 import "./App.css";
+import "./onboarding/onboarding.css";
+import { GuideFigures } from "./onboarding/schematics";
+import {
+  WelcomeModal,
+  GettingStartedChecklist,
+  ProductTour,
+  obWelcomeSeen,
+  markObWelcomeSeen,
+  obChecklistDismissed as readObChecklistDismissed,
+  markObChecklistDismissed,
+  resetObWelcome,
+  resetObChecklist,
+} from "./onboarding";
 import {
   type Annotation,
   type WireGroundPoint,
@@ -91,42 +104,40 @@ const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
 // One entry per kind keeps the rail buttons DRY and in sync with the union.
 const ANNOTATION_TOOLS: {
   kind: ActiveAnnoType;
+  key: string;
   label: string;
   title: string;
   hint: string;
 }[] = [
   {
     kind: "wire_ground",
+    key: "Q",
     label: "Wire–ground",
     title: "Wire–ground point (Q): one click at the wire–ground intersection",
     hint: "One click at the wire–ground intersection.",
   },
   {
     kind: "vertical_span",
+    key: "W",
     label: "Vertical",
     title: "Vertical span (W): top edge → bottom edge of the flag",
     hint: "Top → bottom edge of the flag · 2 clicks.",
   },
   {
     kind: "horizontal_span",
+    key: "E",
     label: "Horizontal",
     title: "Horizontal span (E): left edge → right edge of the flag",
     hint: "Left → right edge of the flag · 2 clicks.",
   },
   {
     kind: "flag_to_ground_span",
+    key: "R",
     label: "Flag→ground",
     title: "Flag-to-ground span (R): flag top → wire base at the ground",
     hint: "Flag top → wire base at the ground · 2 clicks.",
   },
 ];
-
-// Short label per kind (for the sparkline caption), derived from the tool list
-// so it stays in sync.
-const KIND_LABEL = ANNOTATION_TOOLS.reduce(
-  (m, t) => ((m[t.kind] = t.label), m),
-  {} as Record<ActiveAnnoType, string>
-);
 
 // Directional placement hint per kind (for the live rail help line), derived
 // from the tool list so it stays in sync. Endpoints are canonicalized after
@@ -154,7 +165,13 @@ const TRANSECT_COLORS: Record<Transect, string> = {
   R: "#4DA6FF",
 };
 
-const CANONICAL_DISTANCES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+// Platform modifier glyph for the titlebar keycaps (⌘ on macOS, Ctrl elsewhere),
+// so Undo/Save read correctly on both the macOS and Windows builds and on web.
+const MOD_KEY =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
+    ? "⌘"
+    : "Ctrl";
 
 const ZOOM_PANEL_PX = 360;
 const ZOOM_MIN = 15;
@@ -341,7 +358,6 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
-      ["Toggle auto-advance 1→15", "A"],
     ],
   },
   {
@@ -399,198 +415,19 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   },
 ];
 
-// A small animated schematic of a numbered flag on a wire, showing the four
-// annotation types placing themselves in turn: the wire–ground point (Q), the
-// vertical (W) and horizontal (E) flag spans, and the full flag-to-ground span
-// (R). Pure SVG + CSS; the rolling green highlight is suppressed under
-// prefers-reduced-motion, which leaves all four annotations drawn and legible.
-function AnnotationGuide() {
-  return (
-    <svg
-      className="annotation-guide"
-      viewBox="0 0 260 184"
-      role="img"
-      aria-label="An orange survey flag on a thin wire stake. The four annotation types: Q marks the wire–ground point, W spans the flag top to bottom, E spans it left to right, and R spans from the flag top down to the wire base at the ground."
-    >
-      {/* ground line + texture */}
-      <line className="ag-ground" x1="20" y1="150" x2="240" y2="150" />
-      {[36, 60, 84, 108, 156, 180, 204, 228].map((x) => (
-        <line
-          key={x}
-          className="ag-ground-tick"
-          x1={x}
-          y1="150"
-          x2={x - 7}
-          y2="158"
-        />
-      ))}
-      {/* wire stake (solid above ground, dashed where driven in) — runs up the
-          flag's left/hoist edge, the way a survey flag is actually attached */}
-      <line className="ag-wire" x1="120" y1="30" x2="120" y2="150" />
-      <line
-        className="ag-wire ag-wire--buried"
-        x1="120"
-        y1="150"
-        x2="120"
-        y2="164"
-      />
-      {/* flag blade — a blaze-orange vinyl square fixed to the stake top, flaring
-          out to the fly side. Drawn over the wire so the hoist edge sits on it. */}
-      <rect
-        className="ag-flag"
-        x="120"
-        y="30"
-        width="50"
-        height="40"
-        rx="1.5"
-      />
-      <path className="ag-flag-fold" d="M120 34 Q150 50 168 68" />
-
-      {/* The four annotations are demonstrated ONE AT A TIME, each as the actual
-          two-click gesture: a start dot drops (first click), a line grows slowly
-          to the end, an end dot lands (second click). Only the active one is
-          visible; they cycle Q → W → E → R. Geometry encodes drag direction:
-          a line reveals from its (x1,y1) start, so W/R start at the top and E at
-          the left. */}
-
-      {/* Q — wire–ground point: a single click, so it just drops a dot. */}
-      <g className="ag2 ag2--q">
-        <circle className="ag2-start" cx="120" cy="150" r="4.5" />
-        <text className="ag2-label" x="120" y="176" textAnchor="middle">
-          Q
-        </text>
-      </g>
-
-      {/* W — vertical flag span, top → bottom, just off the fly (right) edge. */}
-      <g className="ag2 ag2--w">
-        <line
-          className="ag2-line"
-          x1="178"
-          y1="30"
-          x2="178"
-          y2="70"
-          pathLength={100}
-        />
-        <circle className="ag2-start" cx="178" cy="30" r="4" />
-        <circle className="ag2-end" cx="178" cy="70" r="4" />
-        <text className="ag2-label" x="186" y="53">
-          W
-        </text>
-      </g>
-
-      {/* E — horizontal flag span, left → right, just above the top edge. */}
-      <g className="ag2 ag2--e">
-        <line
-          className="ag2-line"
-          x1="120"
-          y1="20"
-          x2="170"
-          y2="20"
-          pathLength={100}
-        />
-        <circle className="ag2-start" cx="120" cy="20" r="4" />
-        <circle className="ag2-end" cx="170" cy="20" r="4" />
-        <text className="ag2-label" x="145" y="11" textAnchor="middle">
-          E
-        </text>
-      </g>
-
-      {/* R — flag-to-ground span, flag top → wire base, left of the wire. */}
-      <g className="ag2 ag2--r">
-        <line
-          className="ag2-line"
-          x1="104"
-          y1="30"
-          x2="104"
-          y2="150"
-          pathLength={100}
-        />
-        <circle className="ag2-start" cx="104" cy="30" r="4" />
-        <circle className="ag2-end" cx="104" cy="150" r="4" />
-        <text className="ag2-label" x="96" y="94" textAnchor="end">
-          R
-        </text>
-      </g>
-    </svg>
-  );
-}
-
-// Three transect sampling lines — Left, Center, Right — fanning out from the
-// camera, each in its data color (red / amber / blue). Keys 1 / 2 / 3 select
-// them, and the chosen transect's color tags every annotation. Same
-// suppress-under-reduced-motion behavior as AnnotationGuide.
-function TransectGuide() {
-  return (
-    <svg
-      className="transect-guide"
-      viewBox="0 0 220 150"
-      role="img"
-      aria-label="The three transect lines a flag can stand on: Left in red, Center in amber, Right in blue. Keys 1, 2, 3 select which line a flag is on, and the chosen color tags every mark."
-    >
-      {/* camera viewpoint */}
-      <path className="tg-camera" d="M104 141 L116 141 L110 132 Z" />
-
-      <g className="tg-anno tg-anno--l">
-        <line x1="110" y1="135" x2="52" y2="30" />
-        <circle cx="84" cy="89" r="2.6" />
-        <circle cx="65" cy="54" r="2.6" />
-        <text x="47" y="24" textAnchor="middle">
-          L
-        </text>
-      </g>
-      <g className="tg-anno tg-anno--c">
-        <line x1="110" y1="135" x2="110" y2="26" />
-        <circle cx="110" cy="88" r="2.6" />
-        <circle cx="110" cy="50" r="2.6" />
-        <text x="110" y="18" textAnchor="middle">
-          C
-        </text>
-      </g>
-      <g className="tg-anno tg-anno--r">
-        <line x1="110" y1="135" x2="168" y2="30" />
-        <circle cx="136" cy="89" r="2.6" />
-        <circle cx="155" cy="54" r="2.6" />
-        <text x="173" y="24" textAnchor="middle">
-          R
-        </text>
-      </g>
-    </svg>
-  );
-}
-
-// The two onboarding schematics side by side: which line (transect) and what to
-// mark (tool). Shared by the empty-state intro and the keyboard-help overlay.
-function GuideFigures() {
-  return (
-    <div className="intro-figures">
-      <figure className="intro-figure">
-        <TransectGuide />
-        <figcaption className="intro-figcaption">
-          <b>Transect</b> — which of the three lines a flag stands on.{" "}
-          <kbd>1</kbd> <span className="t-l">L</span> · <kbd>2</kbd>{" "}
-          <span className="t-c">C</span> · <kbd>3</kbd>{" "}
-          <span className="t-r">R</span>; the color tags every mark.
-        </figcaption>
-      </figure>
-      <figure className="intro-figure">
-        <AnnotationGuide />
-        <figcaption className="intro-figcaption">
-          <b>Tool</b> — what to mark. <kbd>Q</kbd>
-          <kbd>W</kbd>
-          <kbd>E</kbd>
-          <kbd>R</kbd>
-        </figcaption>
-      </figure>
-    </div>
-  );
-}
 
 function KeyboardHelp({
   onClose,
   appVersion,
+  onReplayWelcome,
+  onStartTour,
+  onResetChecklist,
 }: {
   onClose: () => void;
   appVersion: string;
+  onReplayWelcome?: () => void;
+  onStartTour?: () => void;
+  onResetChecklist?: () => void;
 }) {
   return (
     <div className="help-backdrop" onClick={onClose}>
@@ -618,10 +455,17 @@ function KeyboardHelp({
           The flags stand along three transect lines (L / C / R), 15 to a line
           and 1 m apart. For each flag, pick its transect and distance from the
           right rail, then choose a tool and click in the main image or the
-          magnified zoom panel. Auto-advance fills distances 1 through 15 in
-          sequence. Files auto-save 5 seconds after the last change once a
-          clicks folder is chosen.
+          magnified zoom panel. Files auto-save 5 seconds after the last change
+          once a clicks folder is chosen.
         </p>
+
+        {onReplayWelcome && onStartTour && onResetChecklist && (
+          <div className="ob-replay">
+            <button onClick={onReplayWelcome}>Replay welcome</button>
+            <button onClick={onStartTour}>Take the tour</button>
+            <button onClick={onResetChecklist}>Reset checklist</button>
+          </div>
+        )}
 
         <div className="help-guide">
           <GuideFigures />
@@ -710,100 +554,6 @@ function CollisionConfirm({
         </div>
       </div>
     </div>
-  );
-}
-
-function DistanceSparkline({
-  clicks,
-  activeType,
-}: {
-  clicks: Annotation[];
-  activeType: ActiveAnnoType;
-}) {
-  const bins: Counts[] = Array.from({ length: 15 }, () => ({
-    L: 0,
-    C: 0,
-    R: 0,
-  }));
-  for (const c of clicks) {
-    // Summarize the distance distribution of the ACTIVE annotation type, so
-    // the sparkline always reflects what the labeler is currently placing.
-    if (c.kind !== activeType) continue;
-    const i = Math.round(c.distance) - 1;
-    if (i >= 0 && i < 15) bins[i][c.transect]++;
-  }
-  const maxCount = Math.max(1, ...bins.map((b) => b.L + b.C + b.R));
-  const W = 240;
-  const H = 28;
-  const barW = W / 15;
-  return (
-    <svg
-      className="distance-sparkline"
-      viewBox={`0 0 ${W} ${H + 10}`}
-      preserveAspectRatio="xMidYMid meet"
-    >
-      <line
-        x1="0"
-        y1={H + 0.5}
-        x2={W}
-        y2={H + 0.5}
-        stroke="var(--border-subtle)"
-        strokeWidth="1"
-      />
-      {bins.map((b, i) => {
-        const x = i * barW + 1;
-        const bw = barW - 2;
-        const lH = (b.L / maxCount) * H;
-        const cH = (b.C / maxCount) * H;
-        const rH = (b.R / maxCount) * H;
-        const totalH = lH + cH + rH;
-        const yBase = H - totalH;
-        return (
-          <g key={i}>
-            <rect
-              x={x}
-              y={yBase}
-              width={bw}
-              height={lH}
-              fill={TRANSECT_COLORS.L}
-            />
-            <rect
-              x={x}
-              y={yBase + lH}
-              width={bw}
-              height={cH}
-              fill={TRANSECT_COLORS.C}
-            />
-            <rect
-              x={x}
-              y={yBase + lH + cH}
-              width={bw}
-              height={rH}
-              fill={TRANSECT_COLORS.R}
-            />
-          </g>
-        );
-      })}
-      <text
-        x="0"
-        y={H + 9}
-        fontSize="8"
-        fill="var(--text-tertiary)"
-        fontFamily="var(--font-mono)"
-      >
-        1
-      </text>
-      <text
-        x={W}
-        y={H + 9}
-        fontSize="8"
-        fill="var(--text-tertiary)"
-        fontFamily="var(--font-mono)"
-        textAnchor="end"
-      >
-        15
-      </text>
-    </svg>
   );
 }
 
@@ -978,7 +728,6 @@ function App() {
 
   const [currentTransect, setCurrentTransect] = useState<Transect>("L");
   const [currentDistance, setCurrentDistance] = useState<number>(1);
-  const [autoAdvance, setAutoAdvance] = useState<boolean>(true);
 
   // Active annotation type chosen via Q (wire–ground) / W (vertical span).
   const [activeType, setActiveType] = useState<ActiveAnnoType>("wire_ground");
@@ -989,8 +738,8 @@ function App() {
   // and blocks other interaction until the labeler resolves it.
   const [pendingCollision, setPendingCollision] = useState<PendingCollision>(null);
 
-  // Cancel = discard the candidate entirely: no append, no dirty change, no
-  // auto-advance. Declared here (before the keyboard effect that references it)
+  // Cancel = discard the candidate entirely: no append, no dirty change.
+  // Declared here (before the keyboard effect that references it)
   // so it's in scope for Escape-to-cancel. Replace / keep-both live further down,
   // alongside the commit helper they share.
   const resolveCollisionCancel = useCallback(() => {
@@ -1061,6 +810,18 @@ function App() {
 
   const [appVersion, setAppVersion] = useState<string>("");
   const [showHelp, setShowHelp] = useState<boolean>(false);
+
+  // Web-only coordinated onboarding: the welcome walkthrough → optional tour, and
+  // the dockable getting-started checklist. `obStage` drives which full-screen
+  // surface (if any) is up; the checklist shows in the "none" stage until done or
+  // dismissed. Everything is gated on `!isTauri()` at the mount sites below.
+  const [obStage, setObStage] = useState<"welcome" | "tour" | "none">("none");
+  const [obChecklistDismissed, setObChecklistDismissedState] =
+    useState<boolean>(() => !isTauri() && readObChecklistDismissed());
+
+  useEffect(() => {
+    if (!isTauri() && !obWelcomeSeen()) setObStage("welcome");
+  }, []);
 
   // First-run onboarding. `firstRun` gates the in-flow placement hint shown over
   // the canvas; it starts false so returning users never flash it, and flips
@@ -2214,9 +1975,6 @@ function App() {
         const step = e.shiftKey ? 0.5 : 1;
         if (selectedIdx !== null) adjustSelectedDistance(-step);
         else setCurrentDistance((d) => Math.max(0, +(d - step).toFixed(1)));
-      } else if (e.key.toLowerCase() === "a" && !cmd) {
-        e.preventDefault();
-        setAutoAdvance((a) => !a);
       } else if (e.key.toLowerCase() === "q" && !cmd) {
         e.preventDefault();
         setActiveType("wire_ground");
@@ -2583,22 +2341,6 @@ function App() {
     [image, viewScale, viewPanX, viewPanY]
   );
 
-  // Wire-ground-only distance auto-advance (1→2→…→15). Pulled out so both the
-  // no-collision commit and the post-confirm replace/keep-both paths apply it
-  // identically. No-op for spans.
-  const applyAutoAdvance = useCallback(
-    (committed: Annotation) => {
-      if (committed.kind !== "wire_ground") return;
-      if (!autoAdvance) return;
-      const intDist = Math.round(committed.distance);
-      const idx = CANONICAL_DISTANCES.indexOf(intDist);
-      if (idx >= 0 && idx + 1 < CANONICAL_DISTANCES.length) {
-        setCurrentDistance(CANONICAL_DISTANCES[idx + 1]);
-      }
-    },
-    [autoAdvance]
-  );
-
   // Single commit path for a fully-formed annotation. Checks for a duplicate
   // {transect, distance, kind}: if none, append + dirty + (wire-ground) auto-
   // advance; if one exists, divert to the blocking confirm modal (no append, no
@@ -2632,13 +2374,12 @@ function App() {
       if (existingIndex === null) {
         setClicks((prev) => [...prev, candidate]);
         setDirty(true);
-        applyAutoAdvance(candidate);
         markOnboarded();
         return;
       }
       setPendingCollision({ candidate, existingIndex });
     },
-    [clicks, applyAutoAdvance, markOnboarded]
+    [clicks, markOnboarded]
   );
 
   const addClickAt = useCallback(
@@ -2655,7 +2396,7 @@ function App() {
   );
 
   // Place an annotation of the active type at image coords (u,v). Wire-ground
-  // adds a dot immediately (with auto-advance); a span places sequentially:
+  // adds a dot immediately; a span places sequentially:
   // first click pins endpoint 1, second click completes + canonicalizes it.
   const placeAt = useCallback(
     (u: number, v: number) => {
@@ -2707,9 +2448,8 @@ function App() {
       candidate,
     ]);
     setDirty(true);
-    applyAutoAdvance(candidate);
     setPendingCollision(null);
-  }, [pendingCollision, applyAutoAdvance, canEdit]);
+  }, [pendingCollision, canEdit]);
 
   const resolveCollisionKeepBoth = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
@@ -2717,9 +2457,8 @@ function App() {
     const { candidate } = pendingCollision;
     setClicks((prev) => [...prev, candidate]);
     setDirty(true);
-    applyAutoAdvance(candidate);
     setPendingCollision(null);
-  }, [pendingCollision, applyAutoAdvance, canEdit]);
+  }, [pendingCollision, canEdit]);
 
   const handleCanvasClick = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -2933,6 +2672,30 @@ function App() {
   const horizontalSpanCount = spanCounts.horizontal_span;
   const flagToGroundSpanCount = spanCounts.flag_to_ground_span;
 
+  // Getting-started checklist progress, tracked from live app state (web only).
+  const obChecklistItems = [
+    { label: "Open an image", done: !!image },
+    {
+      label: (
+        <>
+          Place your first wire-ground point <kbd>Q</kbd>
+        </>
+      ),
+      done: wireGroundCount > 0,
+    },
+    {
+      label: (
+        <>
+          Add a flag span <kbd>W</kbd>
+          <kbd>E</kbd>
+          <kbd>R</kbd>
+        </>
+      ),
+      done:
+        verticalSpanCount + horizontalSpanCount + flagToGroundSpanCount > 0,
+    },
+  ];
+
   // Web-only (cloud): team-progress tallies (#16), per-site ("cam02 — 8/12") and
   // dataset-wide, rolled up from the `annotations` summary columns in
   // `progressById`. Recomputed on gallery (re)load and after a local save (both
@@ -2958,6 +2721,9 @@ function App() {
   return (
     <main className="app">
       <header className="titlebar">
+        {/* Web has no native title bar to carry the product name, so show a
+            wordmark here (desktop's native window title already does). */}
+        {!isTauri() && <span className="app-name">FlagLabel</span>}
         {image && (
           <span className="title-info">
             <span>{filename}</span>
@@ -3012,7 +2778,7 @@ function App() {
               disabled={clicks.length === 0 || !canEdit}
               title="Undo last click (⌘Z)"
             >
-              Undo
+              <kbd>{MOD_KEY}Z</kbd>Undo
             </button>
             <button
               className="title-btn primary"
@@ -3020,7 +2786,7 @@ function App() {
               disabled={!dirty || !canEdit}
               title="Save (⌘S)"
             >
-              Save
+              <kbd>{MOD_KEY}S</kbd>Save
             </button>
             {!isTauri() && (
               <>
@@ -3080,45 +2846,11 @@ function App() {
         } ${image ? "with-rail" : ""}`}
       >
         {(isTauri() ? folderImages.length > 0 : true) && (
-          <aside className="folder-sidebar">
+          <aside className="folder-sidebar" data-tour-id="tour-explorer">
             <div className="folder-header">
-              {isTauri() ? (
-                // Desktop: the open folder's name (no actions — those are web-only).
-                <div className="folder-head-top">
-                  <span className="folder-title" title={folderDir ?? ""}>
-                    {folderDir ? pathBasename(folderDir) : ""}
-                  </span>
-                </div>
-              ) : (
-                isAdmin && (
-                  // Web admin: a legible text-button action bar. The redundant
-                  // "Shared dataset" label is dropped — it's always the shared
-                  // dataset, so naming it was noise.
-                  <div className="folder-head-actions">
-                    <button
-                      type="button"
-                      className="folder-action-btn"
-                      onClick={openNewFolder}
-                      title="New folder"
-                    >
-                      <FolderPlusIcon />
-                      New folder
-                    </button>
-                    <button
-                      type="button"
-                      className="folder-action-btn"
-                      onClick={handleDownloadAll}
-                      title="Download all annotations as a ZIP of per-image JSON files"
-                    >
-                      <DownloadIcon />
-                      ZIP
-                    </button>
-                  </div>
-                )
-              )}
               {(() => {
-                // Completion readout: a thin meter + tabular count. Desktop counts
-                // locally-labeled images; web reads the shared-dataset summary.
+                // Overall completion. Desktop counts locally-labeled images; web
+                // reads the shared-dataset summary.
                 const annotated = isTauri()
                   ? folderImages.filter((p) => {
                       const c =
@@ -3132,31 +2864,79 @@ function App() {
                   ? folderImages.length
                   : progressSummary.overall.total;
                 const pct = total > 0 ? (annotated / total) * 100 : 0;
-                return (
-                  <div className="folder-progress">
+                const bar = (
+                  <div
+                    className="folder-progress-bar"
+                    role="progressbar"
+                    aria-valuenow={annotated}
+                    aria-valuemin={0}
+                    aria-valuemax={total}
+                    aria-label={`${annotated} of ${total} ${
+                      isTauri() ? "labeled" : "annotated"
+                    }`}
+                  >
                     <div
-                      className="folder-progress-bar"
-                      role="progressbar"
-                      aria-valuenow={annotated}
-                      aria-valuemin={0}
-                      aria-valuemax={total}
-                      aria-label={`${annotated} of ${total} ${
-                        isTauri() ? "labeled" : "annotated"
-                      }`}
-                    >
-                      <div
-                        className="folder-progress-fill"
-                        style={{ width: `${pct}%` }}
-                      />
-                    </div>
-                    <span
-                      className="folder-progress-count"
-                      title={isTauri() ? "labeled / total" : "annotated / total"}
-                    >
-                      <span className="mono">{annotated}</span>/
-                      <span className="mono">{total}</span>
-                    </span>
+                      className="folder-progress-fill"
+                      style={{ width: `${pct}%` }}
+                    />
                   </div>
+                );
+
+                // Desktop: the open folder's name over a meter + count.
+                if (isTauri()) {
+                  return (
+                    <>
+                      <div className="folder-head-top">
+                        <span className="folder-title" title={folderDir ?? ""}>
+                          {folderDir ? pathBasename(folderDir) : ""}
+                        </span>
+                      </div>
+                      <div className="folder-progress">
+                        {bar}
+                        <span
+                          className="folder-progress-count"
+                          title="labeled / total"
+                        >
+                          <span className="mono">{annotated}</span>/
+                          <span className="mono">{total}</span>
+                        </span>
+                      </div>
+                    </>
+                  );
+                }
+
+                // Web: one instrument-style readout row (label · meter · %), then
+                // the admin actions as anchored buttons below.
+                return (
+                  <>
+                    <div className="folder-head-readout">
+                      <span className="folder-head-label">Dataset</span>
+                      {bar}
+                      <span className="folder-head-pct">{Math.round(pct)}%</span>
+                    </div>
+                    {isAdmin && (
+                      <div className="folder-head-actions">
+                        <button
+                          type="button"
+                          className="folder-action-btn folder-action-grow"
+                          onClick={openNewFolder}
+                          title="New folder"
+                        >
+                          <FolderPlusIcon />
+                          New folder
+                        </button>
+                        <button
+                          type="button"
+                          className="folder-action-btn"
+                          onClick={handleDownloadAll}
+                          title="Download all annotations as a ZIP of per-image JSON files"
+                        >
+                          <DownloadIcon />
+                          ZIP
+                        </button>
+                      </div>
+                    )}
+                  </>
                 );
               })()}
             </div>
@@ -3560,7 +3340,7 @@ function App() {
 
         {image && (
           <aside className="right-rail">
-            <div className="zoom-panel">
+            <div className="zoom-panel" data-tour-id="tour-zoom">
               <canvas ref={zoomCanvasRef} onClick={handleZoomClick} />
               {!cursor && <div className="zoom-empty">hover the image</div>}
             </div>
@@ -3587,9 +3367,89 @@ function App() {
             </div>
 
             <div className="rail-middle">
-              <div className="rail-section">
+              <div className="rail-section" data-tour-id="tour-transect">
                 <div className="rail-label">
-                  <span>Annotation</span>
+                  <span>Transect</span>
+                  <span className="key-hint">1 · 2 · 3</span>
+                </div>
+                <div className="segmented">
+                  {TRANSECTS.map((t, i) => {
+                    const active = currentTransect === t;
+                    const color = TRANSECT_COLORS[t];
+                    return (
+                      <button
+                        key={t}
+                        className={`segmented-btn transect-btn ${
+                          active ? "active" : ""
+                        }`}
+                        style={
+                          active
+                            ? {
+                                borderColor: color,
+                                color,
+                                background: `${color}22`,
+                              }
+                            : undefined
+                        }
+                        onClick={() => setCurrentTransect(t)}
+                      >
+                        <span className="seg-letter">{t}</span>
+                        <span className="seg-key">{i + 1}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rail-section" data-tour-id="tour-distance">
+                <div className="rail-label">
+                  <span>Distance</span>
+                  <span className="key-hint">↑ · ↓</span>
+                </div>
+                <div className="distance-stepper">
+                  <input
+                    type="number"
+                    value={currentDistance}
+                    step={0.5}
+                    min={0}
+                    max={99.9}
+                    onChange={(e) => {
+                      const v = Number(e.currentTarget.value);
+                      if (Number.isFinite(v)) setCurrentDistance(v);
+                    }}
+                    className="distance-value"
+                    aria-label="Distance"
+                  />
+                  <div className="distance-spin">
+                    <button
+                      type="button"
+                      className="distance-spin-btn"
+                      onClick={() =>
+                        setCurrentDistance((d) =>
+                          Math.min(99.9, +(d + 1).toFixed(1))
+                        )
+                      }
+                      aria-label="Increase distance"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className="distance-spin-btn"
+                      onClick={() =>
+                        setCurrentDistance((d) => Math.max(0, +(d - 1).toFixed(1)))
+                      }
+                      aria-label="Decrease distance"
+                    >
+                      ▼
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rail-section" data-tour-id="tour-tool">
+                <div className="rail-label">
+                  <span>Tool</span>
                   <span className="key-hint">Q · W · E · R</span>
                 </div>
                 <div className="segmented tool-grid">
@@ -3603,7 +3463,8 @@ function App() {
                       title={tool.title}
                       aria-pressed={activeType === tool.kind}
                     >
-                      {tool.label}
+                      <kbd className="tool-key">{tool.key}</kbd>
+                      <span className="tool-name">{tool.label}</span>
                     </button>
                   ))}
                 </div>
@@ -3612,73 +3473,6 @@ function App() {
                     ? "Click the second point to finish · Esc to cancel"
                     : KIND_HINT[activeType]}
                 </p>
-              </div>
-
-              <div className="rail-section">
-                <div className="rail-label">
-                  <span>Transect</span>
-                  <span className="key-hint">1 · 2 · 3</span>
-                </div>
-                <div className="segmented">
-                  {TRANSECTS.map((t) => {
-                    const active = currentTransect === t;
-                    return (
-                      <button
-                        key={t}
-                        className={`segmented-btn ${active ? "active" : ""}`}
-                        style={
-                          active
-                            ? {
-                                background: TRANSECT_COLORS[t],
-                                color: "var(--bg-app)",
-                                borderColor: TRANSECT_COLORS[t],
-                              }
-                            : undefined
-                        }
-                        onClick={() => setCurrentTransect(t)}
-                      >
-                        {t}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="rail-section">
-                <div className="rail-label">
-                  <span>Distance</span>
-                  <span className="key-hint">↑ · ↓</span>
-                </div>
-                <div className="distance-row">
-                  <input
-                    type="number"
-                    value={currentDistance}
-                    step={0.5}
-                    min={0}
-                    max={99.9}
-                    onChange={(e) => {
-                      const v = Number(e.currentTarget.value);
-                      if (Number.isFinite(v)) setCurrentDistance(v);
-                    }}
-                    className="distance-input"
-                  />
-                  <span className="unit">m</span>
-                </div>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={autoAdvance}
-                    onChange={(e) => setAutoAdvance(e.currentTarget.checked)}
-                  />
-                  <span>Auto-advance 1→15</span>
-                  <span className="key-hint">A</span>
-                </label>
-                <div className="sparkline-block">
-                  <span className="sparkline-caption">
-                    {KIND_LABEL[activeType]} · by distance
-                  </span>
-                  <DistanceSparkline clicks={clicks} activeType={activeType} />
-                </div>
               </div>
             </div>
 
@@ -3697,13 +3491,16 @@ function App() {
                   <span className="lbl">G</span>
                   <span className="mono total">{flagToGroundSpanCount}</span>
                 </div>
+                {clicks.length > 0 && (
+                  <button
+                    className="clear-link"
+                    onClick={handleClear}
+                    disabled={!canEdit}
+                  >
+                    clear all
+                  </button>
+                )}
               </div>
-
-              {clicks.length > 0 && (
-                <button className="clear-link" onClick={handleClear} disabled={!canEdit}>
-                  clear all
-                </button>
-              )}
             </div>
           </aside>
         )}
@@ -3713,6 +3510,24 @@ function App() {
         <KeyboardHelp
           onClose={() => setShowHelp(false)}
           appVersion={appVersion}
+          {...(!isTauri()
+            ? {
+                onReplayWelcome: () => {
+                  setShowHelp(false);
+                  resetObWelcome();
+                  setObStage("welcome");
+                },
+                onStartTour: () => {
+                  setShowHelp(false);
+                  setObStage("tour");
+                },
+                onResetChecklist: () => {
+                  setShowHelp(false);
+                  resetObChecklist();
+                  setObChecklistDismissedState(false);
+                },
+              }
+            : {})}
         />
       )}
 
@@ -3904,6 +3719,41 @@ function App() {
             }}
           />
         )}
+
+      {/* Web-only coordinated onboarding: welcome walkthrough, product tour, and
+          getting-started checklist. Gated on the platform; never mounts on desktop. */}
+      {!isTauri() && (
+        <>
+          {obStage === "welcome" && (
+            <WelcomeModal
+              onFinish={() => {
+                markObWelcomeSeen();
+                setObStage("none");
+              }}
+              onStartTour={() => setObStage("tour")}
+            />
+          )}
+          {obStage === "tour" && (
+            <ProductTour
+              onClose={() => {
+                markObWelcomeSeen();
+                setObStage("none");
+              }}
+            />
+          )}
+          {obStage === "none" &&
+            !obChecklistDismissed &&
+            obChecklistItems.some((i) => !i.done) && (
+              <GettingStartedChecklist
+                items={obChecklistItems}
+                onDismiss={() => {
+                  markObChecklistDismissed();
+                  setObChecklistDismissedState(true);
+                }}
+              />
+            )}
+        </>
+      )}
     </main>
   );
 }

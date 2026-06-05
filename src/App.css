@@ -297,6 +297,36 @@ body,
 
 /* ---------- Web explorer (folders / sites tree) ---------- */
 
+/* Web sidebar eyebrow: a quiet "DATASET" label with the overall completion %. */
+/* Web sidebar readout: a "DATASET" label, an inline completion meter, and the
+   overall % — one instrument-style row, so progress reads at a glance without a
+   redundant second number. */
+.folder-head-readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.folder-head-label {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.folder-head-pct {
+  flex-shrink: 0;
+  min-width: 30px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* Sidebar header: title row + a thin completion meter. */
 .folder-head-top {
   display: flex;
@@ -348,31 +378,38 @@ body,
   color: var(--text-secondary);
 }
 
-/* Web admin action bar: legible text buttons, right-aligned. Replaces the bare
-   icon toolbar (no "Shared dataset" label — it's always the shared dataset). */
+/* Web admin action bar: two anchored buttons under the readout. "New folder"
+   grows to fill; "ZIP" stays compact. Bordered fills so they read as buttons,
+   not floating text. */
 .folder-head-actions {
   display: flex;
-  justify-content: flex-end;
-  gap: 4px;
+  gap: 6px;
+  margin-top: 12px;
 }
 
 .folder-action-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
   font: inherit;
   font-size: 11px;
   color: var(--text-secondary);
-  background: transparent;
-  border: none;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color 80ms ease, color 80ms ease;
+  transition: background-color 80ms ease, border-color 80ms ease,
+    color 80ms ease;
+}
+
+.folder-action-grow {
+  flex: 1;
 }
 
 .folder-action-btn:hover {
-  background: var(--bg-elevated);
+  border-color: var(--border-strong);
   color: var(--text-primary);
 }
 
@@ -637,36 +674,40 @@ body,
   border-bottom: none;
 }
 
+/* Counts + clear-all share one row: tallies on the left, the clear-all link
+   on the right, above the rail's bottom border. */
 .rail-section.counts {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   border-bottom: none;
 }
 
+/* clear-all is a quiet inline link here (no button box), turning destructive
+   red only on hover. */
 .clear-link {
-  align-self: stretch;
-  margin: 6px 16px 16px;
-  padding: 7px 10px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
   font: inherit;
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: background-color var(--transition-fast) ease,
-    border-color var(--transition-fast) ease, color var(--transition-fast) ease;
+  transition: color var(--transition-fast) ease;
 }
 
-/* Destructive: neutral at rest, clearly dangerous on hover. */
-.clear-link:hover {
-  background: rgba(185, 28, 28, 0.15);
-  border-color: var(--danger);
+.clear-link:hover:not(:disabled) {
   color: var(--danger-soft);
 }
 
-.clear-link:active {
-  transform: scale(0.99);
+.clear-link:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .save-state {
@@ -721,10 +762,11 @@ body,
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  font-size: 11px;
-  color: var(--text-secondary);
-  text-transform: lowercase;
-  letter-spacing: 0.02em;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .key-hint {
@@ -770,6 +812,34 @@ body,
   transform: scale(0.98);
 }
 
+/* Transect buttons stack the letter over its shortcut number (1 / 2 / 3). The
+   selected one reads as a colored outline + tint (set inline per transect
+   color), not a solid fill, so it stays distinct from the inverse tool. */
+.transect-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 9px 0;
+}
+
+.transect-btn .seg-letter {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.transect-btn .seg-key {
+  font-size: 9px;
+  line-height: 1;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.transect-btn.active .seg-key {
+  color: inherit;
+  opacity: 0.75;
+}
+
 /* Annotation-type selector: 2×2 grid of word-labeled tools. The transect
    control below it stays a 3-up row of single letters. */
 .segmented.tool-grid {
@@ -777,8 +847,42 @@ body,
 }
 
 .tool-grid .segmented-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
   font-size: 12px;
   font-weight: 500;
+  text-align: left;
+}
+
+/* Inset keycap inside each tool button, so the Q/W/E/R shortcut is visible
+   right where the tool is chosen (not only in the section's key-hint). */
+.tool-key {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selected (inverse) tool: flip the keycap to the dark ink too, so it stays
+   legible against the white fill. */
+.segmented-btn.tool-active .tool-key {
+  border-color: var(--bg-app);
+  color: var(--bg-app);
 }
 
 /* Selected tool: a neutral inverse fill, deliberately distinct from the
@@ -806,110 +910,73 @@ body,
   min-height: 2.9em;
 }
 
-/* Distance input */
+/* Distance stepper: a large tabular readout flanked by ▲ / ▼ steppers. Still
+   editable by typing and by the ↑ / ↓ keys. */
 
-.distance-row {
+.distance-stepper {
   display: flex;
-  align-items: baseline;
+  align-items: stretch;
   gap: 6px;
 }
 
-.distance-input {
+.distance-value {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
   font: inherit;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 13px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  background: var(--bg-elevated);
+  font-size: 18px;
   color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
   outline: none;
-  width: 80px;
+  -moz-appearance: textfield;
   transition: border-color 80ms ease;
 }
 
-.distance-input:focus {
+.distance-value:focus {
   border-color: var(--border-strong);
 }
 
-.distance-input::-webkit-inner-spin-button,
-.distance-input::-webkit-outer-spin-button {
+.distance-value::-webkit-inner-spin-button,
+.distance-value::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 
-.unit {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-/* Checkbox */
-
-.checkbox-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  margin-top: 4px;
-}
-
-.checkbox-row input[type="checkbox"] {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 3px;
-  background: var(--bg-elevated);
-  cursor: pointer;
-  position: relative;
-  transition: background-color 80ms ease, border-color 80ms ease;
-  flex-shrink: 0;
-}
-
-.checkbox-row input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
-.checkbox-row input[type="checkbox"]:checked::after {
-  content: "";
-  position: absolute;
-  left: 3px;
-  top: 0;
-  width: 4px;
-  height: 8px;
-  border: solid #0c0c0d;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-
-.checkbox-row .key-hint {
-  margin-left: auto;
-}
-
-.sparkline-block {
+.distance-spin {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 8px;
+  flex-shrink: 0;
 }
 
-.sparkline-caption {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-tertiary);
-  letter-spacing: 0.02em;
+.distance-spin-btn {
+  width: 30px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color 80ms ease, border-color 80ms ease,
+    color 80ms ease;
 }
 
-.distance-sparkline {
-  display: block;
-  width: 100%;
-  height: auto;
+.distance-spin-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.distance-spin-btn:active {
+  transform: scale(0.96);
 }
 
 /* ---------- Inline link ---------- */
@@ -1907,14 +1974,9 @@ canvas {
   box-shadow: var(--focus-ring);
 }
 
-.distance-input:focus-visible {
+.distance-value:focus-visible {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(52, 163, 130, 0.25);
-}
-
-.checkbox-row input[type="checkbox"]:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--accent);
 }
 
 .slider:focus-visible::-webkit-slider-thumb {

@@ -44,8 +44,7 @@ Updates install automatically — when a new version is published, FlagLabel wil
 4. Place the annotation:
    - **Wire–ground point** — one click at the wire–ground intersection. A colored dot + label (e.g. `L1`) appears on the main image and in the zoom panel.
    - **Spans** — two clicks: the first pins one end, a ghost line follows the cursor, the second completes it. Endpoints can land on either the main image or the zoom panel; **Esc** cancels a half-placed span. Each flag carries the spans independently, so far flags can hold only the ones still visible.
-5. With **Auto-advance** on (default), distance auto-bumps 1 → 15 then stops.
-6. **⌘S** to save, or just keep working — annotations auto-save 5 s after the last edit. The first save asks for a folder; that folder is remembered.
+5. **⌘S** to save, or just keep working — annotations auto-save 5 s after the last edit. The first save asks for a folder; that folder is remembered.
 
 Re-opening an image whose JSON already exists in the saved folder auto-loads the previous annotations. In folder mode, the sidebar shows per-image annotation counts so you can see at a glance how much of the batch is done.
 
@@ -77,7 +76,6 @@ The main image supports trackpad pinch or mouse wheel to zoom around the cursor,
 | ⇧↑ / ⇧↓ | Distance ±0.5 m |
 | Delete / ⌫ | Delete selected annotation |
 | Esc | Cancel half-placed span / clear selection / close help |
-| A | Toggle auto-advance |
 | [ / ] | Zoom-panel radius − / + 5 px |
 | = / − | Main-image zoom in / out |
 | 0 | Reset main-image zoom |
