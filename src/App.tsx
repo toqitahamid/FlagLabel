@@ -160,7 +160,12 @@ const ZOOM_PANEL_PX = 360;
 const ZOOM_MIN = 15;
 const ZOOM_MAX = 300;
 const ZOOM_DEFAULT = 80;
-const CROSSHAIR_COLOR = "#84cc16";
+// Zoom-panel center reticle. A single thin tinted line was invisible over pale
+// subjects (a white flag, snow, light leaves), so the reticle is drawn in two
+// passes — a dark halo under a bright core — to read on ANY background.
+const CROSSHAIR_CORE_COLOR = "rgba(255, 255, 255, 0.95)";
+const CROSSHAIR_HALO_COLOR = "rgba(0, 0, 0, 0.55)";
+const CROSSHAIR_GAP = 7;
 
 const SETTINGS_FILE = "settings.json";
 const SETTINGS_KEY_CLICKS_DIR = "clicks_dir";
@@ -2517,16 +2522,30 @@ function App() {
       );
     }
 
-    ctx.strokeStyle = CROSSHAIR_COLOR;
-    ctx.lineWidth = 0.6;
-    ctx.globalAlpha = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(0, cssH / 2);
-    ctx.lineTo(cssW, cssH / 2);
-    ctx.moveTo(cssW / 2, 0);
-    ctx.lineTo(cssW / 2, cssH);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    // Center reticle: dark halo under a bright core, with a small gap at the
+    // exact center so the targeted pixel stays visible.
+    const rcx = cssW / 2;
+    const rcy = cssH / 2;
+    const gap = CROSSHAIR_GAP;
+    const strokeReticle = () => {
+      ctx.beginPath();
+      ctx.moveTo(0, rcy);
+      ctx.lineTo(rcx - gap, rcy);
+      ctx.moveTo(rcx + gap, rcy);
+      ctx.lineTo(cssW, rcy);
+      ctx.moveTo(rcx, 0);
+      ctx.lineTo(rcx, rcy - gap);
+      ctx.moveTo(rcx, rcy + gap);
+      ctx.lineTo(rcx, cssH);
+      ctx.stroke();
+    };
+    ctx.lineCap = "round";
+    ctx.strokeStyle = CROSSHAIR_HALO_COLOR;
+    ctx.lineWidth = 3;
+    strokeReticle();
+    ctx.strokeStyle = CROSSHAIR_CORE_COLOR;
+    ctx.lineWidth = 1;
+    strokeReticle();
   }, [image, clicks, cursor, zoomRadius, selectedIdx, pending]);
 
   const mainCanvasEventToImageCoords = useCallback(
