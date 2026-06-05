@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { isTauri } from "./platform";
 import { getSupabaseClient } from "./supabase-client";
@@ -86,6 +86,117 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Small emerald flag glyph echoing the OTP email's wordmark, so the login
+// screen and the email read as one product.
+function FlagMark() {
+  return (
+    <svg
+      className="auth-mark"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M6 3.5v17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M6 4.6h11l-2.6 3.4L17 11.4H6z" fill="currentColor" />
+    </svg>
+  );
+}
+
+// Six single-digit boxes for the OTP: auto-advances on entry, backspaces to the
+// previous box when empty, accepts a pasted code across all boxes, and fires
+// `onComplete` once all six are filled (so the user rarely needs the button).
+// `value` is the packed digit string owned by the parent.
+const OTP_LEN = 6;
+
+function OtpBoxes({
+  value,
+  onChange,
+  onComplete,
+  disabled,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onComplete: (full: string) => void;
+  disabled?: boolean;
+}) {
+  const refs = useRef<Array<HTMLInputElement | null>>([]);
+  const digits = Array.from({ length: OTP_LEN }, (_, i) => value[i] ?? "");
+
+  const commit = (next: string) => {
+    const packed = next.replace(/\D/g, "").slice(0, OTP_LEN);
+    onChange(packed);
+    if (packed.length === OTP_LEN) onComplete(packed);
+    return packed;
+  };
+
+  const focusBox = (i: number) => {
+    const clamped = Math.max(0, Math.min(i, OTP_LEN - 1));
+    refs.current[clamped]?.focus();
+    refs.current[clamped]?.select();
+  };
+
+  const handleChange = (i: number, raw: string) => {
+    const digit = raw.replace(/\D/g, "").slice(-1);
+    if (!digit) return;
+    commit(value.slice(0, i) + digit + value.slice(i + 1));
+    focusBox(i + 1);
+  };
+
+  const handleKeyDown = (i: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      if (value[i]) {
+        onChange(value.slice(0, i) + value.slice(i + 1));
+      } else if (i > 0) {
+        onChange(value.slice(0, i - 1) + value.slice(i));
+        focusBox(i - 1);
+      }
+    } else if (e.key === "ArrowLeft") {
+      e.preventDefault();
+      focusBox(i - 1);
+    } else if (e.key === "ArrowRight") {
+      e.preventDefault();
+      focusBox(i + 1);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "");
+    if (!pasted) return;
+    e.preventDefault();
+    const packed = commit(pasted);
+    focusBox(packed.length);
+  };
+
+  return (
+    <div className="otp-boxes" role="group" aria-label="6-digit verification code">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          className="otp-box"
+          type="text"
+          inputMode="numeric"
+          autoComplete={i === 0 ? "one-time-code" : "off"}
+          maxLength={1}
+          value={d}
+          disabled={disabled}
+          aria-label={`Digit ${i + 1}`}
+          autoFocus={i === 0}
+          onChange={(e) => handleChange(i, e.target.value)}
+          onKeyDown={(e) => handleKeyDown(i, e)}
+          onPaste={handlePaste}
+          onFocus={(e) => e.target.select()}
+        />
+      ))}
+    </div>
+  );
+}
+
 // Passwordless email OTP login (see ADR-0004). Two steps: request a 6-digit
 // code (`signInWithOtp`), then verify it (`verifyOtp`). There is deliberately
 // no password path — institutional Microsoft/Defender Safe Links prefetches and
@@ -140,15 +251,14 @@ function LoginScreen() {
     [sendCode],
   );
 
-  const onSubmitCode = useCallback(
-    async (e: React.FormEvent<HTMLFormElement>) => {
-      e.preventDefault();
+  const verify = useCallback(
+    async (token: string) => {
       setSubmitting(true);
       setError(null);
       try {
         const { error: verifyError } = await getSupabaseClient().auth.verifyOtp({
           email: email.trim(),
-          token: code.trim(),
+          token: token.trim(),
           type: "email",
         });
         if (verifyError) setError(friendlyAuthError(verifyError.message));
@@ -159,14 +269,25 @@ function LoginScreen() {
         setSubmitting(false);
       }
     },
-    [email, code],
+    [email],
+  );
+
+  const onSubmitCode = useCallback(
+    (e: React.FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      void verify(code);
+    },
+    [verify, code],
   );
 
   if (step === "email") {
     return (
       <div className="auth-screen">
         <form className="auth-card" onSubmit={onSubmitEmail}>
-          <h1 className="auth-title">FlagLabel</h1>
+          <h1 className="auth-title">
+            <FlagMark />
+            FlagLabel
+          </h1>
           <p className="auth-subtitle">Sign in to the shared dataset.</p>
           <label className="auth-field">
             <span>Email</span>
@@ -203,21 +324,18 @@ function LoginScreen() {
     <div className="auth-screen">
       <form className="auth-card" onSubmit={onSubmitCode}>
         <h1 className="auth-title">Check your email</h1>
-        <p className="auth-subtitle">We sent a 6-digit code to {email}.</p>
-        <label className="auth-field">
-          <span>Verification code</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            pattern="[0-9]*"
-            maxLength={6}
+        <p className="auth-subtitle">
+          We sent a 6-digit code to <strong>{email}</strong>.
+        </p>
+        <div className="otp-field">
+          <span className="otp-label">Verification code</span>
+          <OtpBoxes
             value={code}
-            onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-            required
-            autoFocus
+            onChange={setCode}
+            onComplete={(full) => void verify(full)}
+            disabled={submitting}
           />
-        </label>
+        </div>
         {error && (
           <div className="auth-error" role="alert">
             {error}
