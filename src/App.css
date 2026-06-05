@@ -2137,6 +2137,34 @@ canvas {
   text-align: center;
 }
 
+/* OTP step: "Use a different email" / "Resend code" affordances. */
+.auth-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.auth-linkbtn {
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.auth-linkbtn:hover:not(:disabled) {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.auth-linkbtn:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
 .auth-loading {
   font-size: 14px;
   color: var(--text-secondary);
