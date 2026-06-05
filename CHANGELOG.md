@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.0
+
+### Web onboarding
+First-run onboarding for the shared web app, all replayable any time from the **? Help** overlay (Replay welcome / Take the tour / Reset checklist):
+- **Welcome walkthrough** — a short modal, shown once per browser, covering the wire–ground point, the three transects, and setting distance + tool, using the animated flag/transect schematics.
+- **Getting-started checklist** — a dockable card that checks off your first steps (open an image, place your first wire–ground point, add a flag span) and can be dismissed.
+- **Product tour** — spotlight coachmarks that walk you through the real controls: explorer → transect → distance → tool → zoom panel.
+
+### Rail and controls
+- The right rail is reordered to **Transect → Distance → Tool**.
+- Transect buttons now show the letter with its shortcut number and a colored outline when selected; the tool buttons carry their **Q / W / E / R** keycaps; the distance field is a larger stepper; **clear all** moved onto the counts line.
+- **Removed auto-advance** — distance no longer auto-bumps after a wire–ground point, and the `A` shortcut is gone. Set the distance yourself with `↑` / `↓` or the steppers.
+- Removed the per-distance sparkline from the rail.
+- **Undo** and **Save** now show their keyboard shortcut on the button (`⌘Z` / `⌘S`, or `Ctrl` on Windows).
+
+### Web chrome
+- The titlebar shows a **FlagLabel** wordmark (the web build has no native title bar to carry it).
+- The dataset sidebar header is now a single readout row — a **DATASET** label, a completion meter, and the overall percentage — with **New folder** and **ZIP** as anchored buttons.
+
 ## v0.3.1
 
 ### Fixes
