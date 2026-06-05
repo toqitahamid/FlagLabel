@@ -120,29 +120,29 @@ const ANNOTATION_TOOLS: {
     kind: "vertical_span",
     key: "W",
     label: "Vertical",
-    title: "Vertical span (W): top edge → bottom edge of the flag",
-    hint: "Top → bottom edge of the flag · 2 clicks.",
+    title: "Vertical span (W): the flag's top and bottom edges · click either first",
+    hint: "Top and bottom edge of the flag · 2 clicks, either order.",
   },
   {
     kind: "horizontal_span",
     key: "E",
     label: "Horizontal",
-    title: "Horizontal span (E): left edge → right edge of the flag",
-    hint: "Left → right edge of the flag · 2 clicks.",
+    title: "Horizontal span (E): the flag's left and right edges · click either first",
+    hint: "Left and right edge of the flag · 2 clicks, either order.",
   },
   {
     kind: "flag_to_ground_span",
     key: "R",
     label: "Flag→ground",
-    title: "Flag-to-ground span (R): flag top → wire base at the ground",
-    hint: "Flag top → wire base at the ground · 2 clicks.",
+    title: "Flag-to-ground span (R): the flag top and the wire base at the ground · click either first",
+    hint: "Flag top and wire base at the ground · 2 clicks, either order.",
   },
 ];
 
-// Directional placement hint per kind (for the live rail help line), derived
-// from the tool list so it stays in sync. Endpoints are canonicalized after
-// placement (see canonicalizeSpan), so the arrow is a suggested order for
-// consistency, not a requirement.
+// Placement hint per kind (for the live rail help line), derived from the tool
+// list so it stays in sync. Endpoints are canonicalized after placement (see
+// canonicalizeSpan), so either click order yields the same stored span — the
+// hints name the two edges to connect, not a required order.
 const KIND_HINT = ANNOTATION_TOOLS.reduce(
   (m, t) => ((m[t.kind] = t.hint), m),
   {} as Record<ActiveAnnoType, string>
