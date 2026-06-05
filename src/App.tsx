@@ -71,6 +71,7 @@ import {
   splitImageName,
 } from "./cloud/site-upload";
 import { UploadModal } from "./cloud/UploadModal";
+import { AdminPanel } from "./cloud/AdminPanel";
 import { useImageLock } from "./cloud/useImageLock";
 import { useAccount } from "./cloud/AuthGate";
 
@@ -805,6 +806,8 @@ function App() {
   // The folder whose "Add images" modal is open (null = closed). Replaces the old
   // raw hidden-file-input flow with the richer drag-drop UploadModal.
   const [uploadModalSite, setUploadModalSite] = useState<string | null>(null);
+  // Web-only admin user-management panel (gated on isAdmin in the titlebar).
+  const [adminPanelOpen, setAdminPanelOpen] = useState(false);
   // Right-click context menu + delete-confirm popover + inline rename target, all
   // keyed by the row's {type, site, name}. `busy` flags an in-flight destructive
   // op so the confirm/rename UIs can disable themselves.
@@ -2878,6 +2881,15 @@ function App() {
                   <span className="title-account-email" title={account.email}>
                     {account.email}
                   </span>
+                  {isAdmin && (
+                    <button
+                      className="title-btn ghost"
+                      onClick={() => setAdminPanelOpen(true)}
+                      title="Manage users"
+                    >
+                      Admin
+                    </button>
+                  )}
                   <button
                     className="title-btn ghost"
                     onClick={account.signOut}
@@ -3767,6 +3779,14 @@ function App() {
             }}
           />
         )}
+
+      {/* Web-only admin user-management panel. */}
+      {!isTauri() && adminPanelOpen && account && (
+        <AdminPanel
+          currentEmail={account.email}
+          onClose={() => setAdminPanelOpen(false)}
+        />
+      )}
 
       {/* Web-only coordinated onboarding: welcome walkthrough, product tour, and
           getting-started checklist. Gated on the platform; never mounts on desktop. */}
