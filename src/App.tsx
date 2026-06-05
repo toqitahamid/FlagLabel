@@ -761,10 +761,17 @@ function App() {
   // and there is no shared dataset.
   const [progressById, setProgressById] = useState<Record<string, ImageProgress>>({});
 
-  // Web-only (cloud) state. `isAdmin` gates the upload affordance (RLS is the
-  // real server-side gate); `showUpload` toggles the upload screen. Both are
-  // inert on desktop (the effect that sets isAdmin early-returns on Tauri).
+  // Web-only (cloud) state. `isAdmin` now gates ONLY the privileged force-unlock
+  // affordance (clearing another labeler's lock). Dataset management (upload,
+  // add/rename/delete) is open to every authenticated team member via
+  // `canManageDataset` below. Inert on desktop (the effect that sets isAdmin
+  // early-returns on Tauri).
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  // Dataset management (upload, add/rename/delete folders & images) is available
+  // to every authenticated team member; the RLS policies enforce the same.
+  // Always false on desktop, which uses the local-filesystem paths instead.
+  const canManageDataset = !isTauri();
 
   // Web-only (cloud) explorer state. `allSites` is the folder list shown in the
   // sidebar tree = the union of persisted (possibly-empty) sites and the sites
@@ -2914,7 +2921,7 @@ function App() {
                       {bar}
                       <span className="folder-head-pct">{Math.round(pct)}%</span>
                     </div>
-                    {isAdmin && (
+                    {canManageDataset && (
                       <div className="folder-head-actions">
                         <button
                           type="button"
@@ -3004,9 +3011,7 @@ function App() {
               </ul>
             ) : allSites.length === 0 ? (
               <div className="sb-empty">
-                {isAdmin
-                  ? "No folders yet. Click New folder to create a site (camera), then add its images."
-                  : "No images in the shared dataset yet. Ask the project admin to add a camera folder."}
+                No folders yet. Click New folder to create a site (camera), then add its images.
               </div>
             ) : (
               <div className="tree">
@@ -3022,7 +3027,7 @@ function App() {
                         className="folder-row"
                         onClick={() => !folderRenaming && toggleSite(site)}
                         onContextMenu={
-                          isAdmin
+                          canManageDataset
                             ? (e) =>
                                 openRowMenu(e, { type: "folder", site, name: site })
                             : undefined
@@ -3059,7 +3064,7 @@ function App() {
                             ) : (
                               <span className="folder-badge empty">empty</span>
                             )}
-                            {isAdmin && (
+                            {canManageDataset && (
                               <button
                                 type="button"
                                 className="folder-add"
@@ -3080,7 +3085,7 @@ function App() {
                           {imgs.length === 0 ? (
                             <div className="folder-empty-note">
                               No images yet
-                              {isAdmin ? " — click + to add some." : "."}
+                              {canManageDataset ? " — click + to add some." : "."}
                             </div>
                           ) : (
                             imgs.map(({ path, idx }) => {
@@ -3107,7 +3112,7 @@ function App() {
                                   }`}
                                   onClick={() => !imgRenaming && navigateToIndex(idx)}
                                   onContextMenu={
-                                    isAdmin
+                                    canManageDataset
                                       ? (e) =>
                                           openRowMenu(e, {
                                             type: "image",
@@ -3275,9 +3280,7 @@ function App() {
                   <>
                     {folderImages.length === 0 && (
                       <span className="hint">
-                        {isAdmin
-                          ? "No images in the shared dataset yet — create a folder (camera) and add its images to begin."
-                          : "No images in the shared dataset yet. Ask the project admin to add a camera folder."}
+                        No images in the shared dataset yet — create a folder (camera) and add its images to begin.
                       </span>
                     )}
                     {folderImages.length > 0 && (
@@ -3285,7 +3288,7 @@ function App() {
                         Pick an image from the explorer on the left to begin.
                       </span>
                     )}
-                    {isAdmin && (
+                    {canManageDataset && (
                       <div className="state-buttons">
                         <button className="btn primary" onClick={openNewFolder}>
                           New folder
@@ -3589,8 +3592,8 @@ function App() {
         )}
       </footer>
 
-      {/* Web admin: right-click context menu for a folder/image row. */}
-      {!isTauri() && isAdmin && ctxMenu && (
+      {/* Web: right-click context menu for a folder/image row (any team member). */}
+      {!isTauri() && canManageDataset && ctxMenu && (
         <div
           className="row-ctx-menu"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
@@ -3652,7 +3655,7 @@ function App() {
       )}
 
       {/* Delete confirmation popover (no native dialog). */}
-      {!isTauri() && isAdmin && deleteTarget && (
+      {!isTauri() && canManageDataset && deleteTarget && (
         <>
           <div
             className="row-confirm-backdrop"
@@ -3702,7 +3705,7 @@ function App() {
 
       {/* Add-images upload modal (drag-drop). */}
       {!isTauri() &&
-        isAdmin &&
+        canManageDataset &&
         uploadModalSite !== null &&
         backendRef.current instanceof SupabaseStorageBackend && (
           <UploadModal
