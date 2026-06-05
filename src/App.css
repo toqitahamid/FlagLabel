@@ -76,8 +76,22 @@ body,
   color: var(--text-secondary);
 }
 
-.titlebar .app-name {
-  font-weight: 500;
+.titlebar .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.titlebar .brand-mark {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.titlebar .brand-name {
+  font-weight: 600;
   color: var(--text-primary);
   letter-spacing: -0.01em;
 }
@@ -101,6 +115,7 @@ body,
 .title-actions {
   margin-left: auto;
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 
@@ -177,6 +192,35 @@ body,
   background: var(--border-subtle);
   margin: 0 4px;
   flex-shrink: 0;
+}
+
+/* Account bookend at the far right of the merged header (web only). */
+.title-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-account-email {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* Quiet variant of the title button — used for Sign out so it reads as the
+   lowest-priority action in the row (no fill until hover). */
+.title-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+.title-btn.ghost:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
 }
 
 /* ---------- Workarea ---------- */
@@ -406,6 +450,11 @@ body,
 
 .folder-action-grow {
   flex: 1;
+  /* Fills the row, but pack the icon + label to the left edge. Without this the
+     inherited `justify-content: center` strands the content mid-button, reading
+     as dead space ("a gap beside New folder") rather than a deliberate full-
+     width action. */
+  justify-content: flex-start;
 }
 
 .folder-action-btn:hover {
@@ -2091,46 +2140,6 @@ canvas {
 .auth-loading {
   font-size: 14px;
   color: var(--text-secondary);
-}
-
-/* Web auth wrapper: a compact identity strip stacked ABOVE the app, never
-   floating over the titlebar (the old fixed top-right bar collided with the
-   Undo/Save/Download/Open actions once an image opened). */
-.auth-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
-}
-
-.auth-bar {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  height: 30px;
-  padding: 0 12px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-/* Inside the auth shell the app fills the remaining height instead of a hard
-   100vh (which would push it under the strip). Desktop has no auth shell, so
-   its `.app { height: 100vh }` is unaffected. */
-.auth-shell > .app {
-  height: auto;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.auth-bar-email {
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Web-only: gallery site grouping subheader in the folder sidebar. */

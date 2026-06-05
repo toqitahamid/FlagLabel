@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { isTauri } from "./platform";
 import { getSupabaseClient } from "./supabase-client";
+
+// Web-only account handle, surfaced into App's merged titlebar so the single
+// header can show the signed-in email and a Sign-out control. Null on desktop
+// (no auth there), so the titlebar simply omits the account cluster.
+export type Account = { email: string; signOut: () => void };
+const AccountContext = createContext<Account | null>(null);
+export function useAccount(): Account | null {
+  return useContext(AccountContext);
+}
 
 // Wraps the whole app with the web-only invite-only login gate.
 //
@@ -60,20 +69,20 @@ function WebAuthGate({ children }: { children: React.ReactNode }) {
     return <LoginScreen />;
   }
 
+  // The header used to be two stacked bars (this account strip + App's titlebar).
+  // Now there's one: hand the account down via context and let App's titlebar
+  // render the email + Sign out at the far right (the "Bookend" layout).
   return (
-    <div className="auth-shell">
-      <div className="auth-bar">
-        <span className="auth-bar-email">{session.user.email}</span>
-        <button
-          type="button"
-          className="title-btn"
-          onClick={() => getSupabaseClient().auth.signOut()}
-        >
-          Sign out
-        </button>
-      </div>
+    <AccountContext.Provider
+      value={{
+        email: session.user.email ?? "",
+        signOut: () => {
+          void getSupabaseClient().auth.signOut();
+        },
+      }}
+    >
       {children}
-    </div>
+    </AccountContext.Provider>
   );
 }
 

@@ -72,6 +72,7 @@ import {
 } from "./cloud/site-upload";
 import { UploadModal } from "./cloud/UploadModal";
 import { useImageLock } from "./cloud/useImageLock";
+import { useAccount } from "./cloud/AuthGate";
 
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
@@ -274,6 +275,19 @@ function TrashIcon({ className }: { className?: string }) {
       <path d="M3 6h18" />
       <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    </svg>
+  );
+}
+
+// FlagLabel brand mark: a survey flag on a wire stake, with the wire–ground
+// intersection (the point the app exists to mark) called out as a dot at the
+// base. Inherits `currentColor`; the titlebar tints it with the accent green.
+function FlagLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M7 3.5V20.5" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" />
+      <path d="M7.2 4 17.5 7 7.2 10Z" fill="currentColor" />
+      <circle cx="7" cy="20.5" r="1.7" fill="currentColor" />
     </svg>
   );
 }
@@ -767,6 +781,10 @@ function App() {
   // `canManageDataset` below. Inert on desktop (the effect that sets isAdmin
   // early-returns on Tauri).
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  // Signed-in account (web only; null on desktop). Surfaced into the merged
+  // titlebar's far-right cluster as the email + Sign out.
+  const account = useAccount();
 
   // Dataset management (upload, add/rename/delete folders & images) is available
   // to every authenticated team member; the RLS policies enforce the same.
@@ -2728,9 +2746,13 @@ function App() {
   return (
     <main className="app">
       <header className="titlebar">
-        {/* Web has no native title bar to carry the product name, so show a
-            wordmark here (desktop's native window title already does). */}
-        {!isTauri() && <span className="app-name">FlagLabel</span>}
+        {/* Single merged header. The brand lockup (logo + wordmark) anchors the
+            left on both web and desktop; on web the account email + Sign out are
+            bookended at the far right (they used to be a separate bar). */}
+        <div className="brand">
+          <FlagLogo className="brand-mark" />
+          <span className="brand-name">FlagLabel</span>
+        </div>
         {image && (
           <span className="title-info">
             <span>{filename}</span>
@@ -2777,70 +2799,93 @@ function App() {
             )}
           </span>
         )}
-        {image && (
+        {(image || account) && (
           <div className="title-actions">
-            <button
-              className="title-btn"
-              onClick={handleUndo}
-              disabled={clicks.length === 0 || !canEdit}
-              title="Undo last click (⌘Z)"
-            >
-              <kbd>{MOD_KEY}Z</kbd>Undo
-            </button>
-            <button
-              className="title-btn primary"
-              onClick={handleSave}
-              disabled={!dirty || !canEdit}
-              title="Save (⌘S)"
-            >
-              <kbd>{MOD_KEY}S</kbd>Save
-            </button>
-            {!isTauri() && (
+            {image && (
               <>
-                <span className="title-divider" aria-hidden />
                 <button
                   className="title-btn"
-                  onClick={handleDownloadCurrent}
-                  title="Download this image's annotation JSON"
+                  onClick={handleUndo}
+                  disabled={clicks.length === 0 || !canEdit}
+                  title="Undo last click (⌘Z)"
                 >
-                  Download JSON
+                  <kbd>{MOD_KEY}Z</kbd>Undo
                 </button>
+                <button
+                  className="title-btn primary"
+                  onClick={handleSave}
+                  disabled={!dirty || !canEdit}
+                  title="Save (⌘S)"
+                >
+                  <kbd>{MOD_KEY}S</kbd>Save
+                </button>
+                {!isTauri() && (
+                  <>
+                    <span className="title-divider" aria-hidden />
+                    <button
+                      className="title-btn"
+                      onClick={handleDownloadCurrent}
+                      title="Download this image's annotation JSON"
+                    >
+                      Download JSON
+                    </button>
+                  </>
+                )}
+                {/* Open file / Open folder fire native OS dialogs — desktop only.
+                    On web, images come from the explorer + upload modal instead. */}
+                {isTauri() && (
+                  <>
+                    <span className="title-divider" aria-hidden />
+                    <button
+                      className="title-btn"
+                      onClick={handleOpen}
+                      title="Open image (⌘O)"
+                    >
+                      Open file
+                    </button>
+                    <button
+                      className="title-btn"
+                      onClick={handleOpenFolder}
+                      title="Open folder (⌘⇧O)"
+                    >
+                      Open folder
+                    </button>
+                  </>
+                )}
+                {/* Web has no native menu bar, so the keyboard-help overlay would
+                    be unreachable except via the (undiscoverable) ? key. */}
+                {!isTauri() && (
+                  <>
+                    <span className="title-divider" aria-hidden />
+                    <button
+                      className="title-btn"
+                      onClick={() => setShowHelp(true)}
+                      title="Keyboard shortcuts & guide (?)"
+                      aria-label="Keyboard shortcuts and guide"
+                    >
+                      <kbd>?</kbd> Help
+                    </button>
+                  </>
+                )}
               </>
             )}
-            {/* Open file / Open folder fire native OS dialogs — desktop only.
-                On web, images come from the explorer + upload modal instead. */}
-            {isTauri() && (
+            {/* Account bookend (web). Always present so Sign out stays reachable
+                even at the empty state, where no image actions render. */}
+            {account && (
               <>
-                <span className="title-divider" aria-hidden />
-                <button
-                  className="title-btn"
-                  onClick={handleOpen}
-                  title="Open image (⌘O)"
-                >
-                  Open file
-                </button>
-                <button
-                  className="title-btn"
-                  onClick={handleOpenFolder}
-                  title="Open folder (⌘⇧O)"
-                >
-                  Open folder
-                </button>
-              </>
-            )}
-            {/* Web has no native menu bar, so the keyboard-help overlay would be
-                unreachable except via the (undiscoverable) ? key. Surface it. */}
-            {!isTauri() && (
-              <>
-                <span className="title-divider" aria-hidden />
-                <button
-                  className="title-btn"
-                  onClick={() => setShowHelp(true)}
-                  title="Keyboard shortcuts & guide (?)"
-                  aria-label="Keyboard shortcuts and guide"
-                >
-                  <kbd>?</kbd> Help
-                </button>
+                {image && <span className="title-divider" aria-hidden />}
+                <span className="title-account">
+                  <span className="title-account-email" title={account.email}>
+                    {account.email}
+                  </span>
+                  <button
+                    className="title-btn ghost"
+                    onClick={account.signOut}
+                    title="Sign out of FlagLabel"
+                  >
+                    Sign out
+                  </button>
+                </span>
               </>
             )}
           </div>
