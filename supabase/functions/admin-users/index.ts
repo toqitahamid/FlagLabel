@@ -61,8 +61,25 @@ Deno.serve(async (req) => {
   try {
     switch (payload.action) {
       case "list": {
-        const { data: list, error } = await admin.auth.admin.listUsers();
-        if (error) throw error;
+        // listUsers is paginated (~50/page by default); pull every page so the
+        // panel never silently truncates the user list.
+        type AuthUser = {
+          id: string;
+          email?: string | null;
+          last_sign_in_at?: string | null;
+        };
+        const all: AuthUser[] = [];
+        let page = 1;
+        for (;;) {
+          const { data, error } = await admin.auth.admin.listUsers({
+            page,
+            perPage: 1000,
+          });
+          if (error) throw error;
+          all.push(...data.users);
+          if (data.users.length < 1000) break;
+          page += 1;
+        }
         const { data: roles } = await admin
           .from("app_roles")
           .select("email, role");
@@ -72,7 +89,7 @@ Deno.serve(async (req) => {
             r.role,
           ]),
         );
-        const users = list.users.map((u) => ({
+        const users = all.map((u) => ({
           id: u.id,
           email: u.email ?? "",
           role: roleByEmail.get(u.email ?? "") ?? null,
@@ -120,7 +137,10 @@ Deno.serve(async (req) => {
         }
         const { error: upErr } = await admin
           .from("app_roles")
-          .upsert({ email: got.user.email, role }, { onConflict: "email" });
+          .upsert(
+            { email: got.user.email.toLowerCase(), role },
+            { onConflict: "email" },
+          );
         if (upErr) throw upErr;
         return json({ ok: true });
       }
@@ -137,7 +157,11 @@ Deno.serve(async (req) => {
         const { error: delErr } = await admin.auth.admin.deleteUser(payload.id);
         if (delErr) throw delErr;
         if (got.user.email) {
-          await admin.from("app_roles").delete().eq("email", got.user.email);
+          const { error: roleDelErr } = await admin
+            .from("app_roles")
+            .delete()
+            .eq("email", got.user.email.toLowerCase());
+          if (roleDelErr) throw roleDelErr;
         }
         return json({ ok: true });
       }
@@ -146,9 +170,9 @@ Deno.serve(async (req) => {
         return json({ error: `Unknown action: ${payload.action}` }, 400);
     }
   } catch (e) {
-    return json(
-      { error: e instanceof Error ? e.message : "Unexpected error" },
-      500,
-    );
+    // Log the real error server-side; never return internal detail (schema,
+    // constraint text, etc.) to the browser.
+    console.error("admin-users error:", e);
+    return json({ error: "Internal error" }, 500);
   }
 });
