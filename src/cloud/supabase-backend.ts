@@ -126,6 +126,52 @@ export class SupabaseStorageBackend implements StorageBackend {
     return (data ?? []).map((row) => row.data as AnnotationFile);
   }
 
+  // Dataset export (images + JSON): like `listAnnotationFiles`, but also returns
+  // the `storage_path` so the caller can fetch the image bytes and pair each
+  // image with its label in the ZIP. Annotated-only (`data` non-null) — an
+  // unlabeled image has no JSON to pair with. SELECT is open to all
+  // authenticated users by RLS. Web-only, same as `listAnnotationFiles`.
+  async listAnnotatedImageEntries(): Promise<
+    { site: string; name: string; storagePath: string; data: AnnotationFile }[]
+  > {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from("annotations")
+      .select("site, image_name, storage_path, data")
+      .not("data", "is", null)
+      .order("site", { ascending: true })
+      .order("image_name", { ascending: true });
+    if (error) {
+      throw new Error(
+        `SupabaseStorageBackend.listAnnotatedImageEntries failed: ${error.message}`,
+      );
+    }
+    return (data ?? []).map((row) => ({
+      site: row.site,
+      name: row.image_name,
+      storagePath: row.storage_path,
+      data: row.data as AnnotationFile,
+    }));
+  }
+
+  // Downloads one image's raw bytes from Storage as a Blob (for the dataset ZIP).
+  // `storagePath` is the in-bucket key (`<site>/<name>`), same value stored as an
+  // ImageItem `id`. RLS allows authenticated reads of the photos bucket.
+  async downloadImageBlob(storagePath: string): Promise<Blob> {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase.storage
+      .from(PHOTOS_BUCKET)
+      .download(storagePath);
+    if (error || !data) {
+      throw new Error(
+        `SupabaseStorageBackend.downloadImageBlob failed for "${storagePath}": ${
+          error?.message ?? "no data returned"
+        }`,
+      );
+    }
+    return data;
+  }
+
   // Admin-only ingest (#14): upload one camera folder's image files to Storage
   // under `<site>/<name>` and seed/refresh a row per file. `site` is derived from
   // each file's `webkitRelativePath` (the immediate parent folder = the camera).

@@ -54,6 +54,7 @@ import {
   serializeAnnotationFile,
   canonicalizeAnnotationFile,
   buildZipEntries,
+  zipEntryPath,
   exportEntryName,
 } from "./cloud/export";
 import {
@@ -1319,6 +1320,59 @@ function App() {
       triggerDownload("flaglabel-annotations.zip", blob);
     } catch (e) {
       console.error("Bulk export failed", e);
+    }
+  }, [triggerDownload]);
+
+  // Dataset export: one ZIP with every annotated image AND its JSON, foldered by
+  // site (`site/IMG_0001.JPG` + `site/IMG_0001.json`). Image bytes are downloaded
+  // from Storage with a small concurrency cap; the image is added to the ZIP
+  // BEFORE its JSON so a failed download never leaves an orphan .json.
+  // ponytail: builds the whole ZIP in memory (fine at ~100s of images / <1GB).
+  // If the dataset grows to thousands, switch to a streaming zip +
+  // showSaveFilePicker so blobs are consumed one at a time instead of all held.
+  const [datasetExporting, setDatasetExporting] = useState(false);
+  const handleDownloadDataset = useCallback(async () => {
+    if (isTauri()) return;
+    const backend = backendRef.current;
+    if (!(backend instanceof SupabaseStorageBackend)) return;
+    setDatasetExporting(true);
+    try {
+      const entries = await backend.listAnnotatedImageEntries();
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      let cursor = 0;
+      const CONCURRENCY = 5;
+      const worker = async (): Promise<void> => {
+        while (true) {
+          const i = cursor++;
+          if (i >= entries.length) return;
+          const entry = entries[i];
+          try {
+            const imageBlob = await backend.downloadImageBlob(entry.storagePath);
+            zip.file(`${entry.site}/${entry.name}`, imageBlob);
+            const canonical = canonicalizeAnnotationFile(entry.data);
+            zip.file(zipEntryPath(canonical), serializeAnnotationFile(canonical));
+          } catch (err) {
+            console.error(`Dataset export: skipped ${entry.storagePath}`, err);
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, entries.length) }, () =>
+          worker(),
+        ),
+      );
+      // STORE, not DEFLATE: JPEG/PNG are already compressed, so deflating them
+      // burns CPU (can hang the tab) for ~0 size gain.
+      const blob = await zip.generateAsync({
+        type: "blob",
+        compression: "STORE",
+      });
+      triggerDownload("flaglabel-dataset.zip", blob);
+    } catch (e) {
+      console.error("Dataset export failed", e);
+    } finally {
+      setDatasetExporting(false);
     }
   }, [triggerDownload]);
 
@@ -2997,6 +3051,16 @@ function App() {
                         >
                           <DownloadIcon />
                           ZIP
+                        </button>
+                        <button
+                          type="button"
+                          className="folder-action-btn"
+                          onClick={handleDownloadDataset}
+                          disabled={datasetExporting}
+                          title="Download all annotated images and their JSON as one ZIP"
+                        >
+                          <DownloadIcon />
+                          {datasetExporting ? "Zipping…" : "Images + JSON"}
                         </button>
                       </div>
                     )}
