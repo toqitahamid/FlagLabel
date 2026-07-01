@@ -3050,7 +3050,7 @@ function App() {
                           title="Download all annotations as a ZIP of per-image JSON files"
                         >
                           <DownloadIcon />
-                          ZIP
+                          JSON
                         </button>
                         <button
                           type="button"
@@ -3060,7 +3060,7 @@ function App() {
                           title="Download all annotated images and their JSON as one ZIP"
                         >
                           <DownloadIcon />
-                          {datasetExporting ? "Zipping…" : "Images + JSON"}
+                          {datasetExporting ? "Zipping…" : "Images"}
                         </button>
                       </div>
                     )}

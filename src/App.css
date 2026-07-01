@@ -427,6 +427,7 @@ body,
    not floating text. */
 .folder-head-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 12px;
 }
@@ -444,16 +445,24 @@ body,
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  white-space: nowrap;
   transition: background-color 80ms ease, border-color 80ms ease,
     color 80ms ease;
 }
 
-.folder-action-grow {
+/* The two export buttons share the row below New folder, splitting it evenly. */
+.folder-head-actions .folder-action-btn:not(.folder-action-grow) {
   flex: 1;
-  /* Fills the row, but pack the icon + label to the left edge. Without this the
-     inherited `justify-content: center` strands the content mid-button, reading
-     as dead space ("a gap beside New folder") rather than a deliberate full-
-     width action. */
+}
+
+.folder-action-grow {
+  /* New folder takes its own full-width row (the rail is too narrow for three
+     buttons abreast — they wrapped their labels). */
+  flex-basis: 100%;
+  /* Pack the icon + label to the left edge. Without this the inherited
+     `justify-content: center` strands the content mid-button, reading as dead
+     space ("a gap beside New folder") rather than a deliberate full-width
+     action. */
   justify-content: flex-start;
 }
 
