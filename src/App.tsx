@@ -404,6 +404,7 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
     title: "Editing",
     rows: [
       ["Undo last annotation", "⌘Z"],
+      ["Redo", "⌘⇧Z"],
       ["Clear all (current image)", "clear all link"],
       ["Select an annotation", "mouse"],
       ["Remove selected annotation", "Del / ⌫"],
@@ -724,6 +725,12 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [clicks, setClicks] = useState<Annotation[]>([]);
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  // Redo: annotations popped by Undo, newest last. Any edit that ISN'T an
+  // undo/redo clears this (standard redo semantics) — see the effect below.
+  const [redoStack, setRedoStack] = useState<Annotation[]>([]);
+  // Set true right before an undo/redo mutates `clicks` so the invalidation
+  // effect knows to KEEP the redo stack for that one change.
+  const historyAction = useRef(false);
   const [cursor, setCursor] = useState<Cursor | null>(null);
   const [zoomRadius, setZoomRadius] = useState<number>(ZOOM_DEFAULT);
 
@@ -1805,13 +1812,36 @@ function App() {
 
   const handleUndo = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
-    setClicks((prev) => {
-      if (prev.length === 0) return prev;
-      return prev.slice(0, -1);
-    });
+    if (clicks.length === 0) return;
+    historyAction.current = true; // keep the redo stack across this change
+    setRedoStack((r) => [...r, clicks[clicks.length - 1]]);
+    setClicks((prev) => prev.slice(0, -1));
     setSelectedIdx(null);
     setDirty(true);
-  }, [canEdit]);
+  }, [canEdit, clicks]);
+
+  const handleRedo = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
+    if (redoStack.length === 0) return;
+    const item = redoStack[redoStack.length - 1];
+    historyAction.current = true; // keep the redo stack across this change
+    setRedoStack((r) => r.slice(0, -1));
+    setClicks((prev) => [...prev, item]);
+    setSelectedIdx(null);
+    setDirty(true);
+  }, [canEdit, redoStack]);
+
+  // Invalidate the redo stack on any `clicks` change that ISN'T an undo/redo
+  // (a new placement, delete, clear, retag, or loading another image). This
+  // centralizes redo invalidation so the many setClicks call sites don't each
+  // have to remember to clear it.
+  useEffect(() => {
+    if (historyAction.current) {
+      historyAction.current = false;
+      return;
+    }
+    setRedoStack((prev) => (prev.length ? [] : prev));
+  }, [clicks]);
 
   const handleClear = useCallback(async () => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
@@ -2028,7 +2058,8 @@ function App() {
 
       if (cmd && e.key.toLowerCase() === "z") {
         e.preventDefault();
-        handleUndo();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
       } else if (e.key === "ArrowLeft" && folderImages.length > 0) {
         e.preventDefault();
         navigateBy(-1);
@@ -2090,6 +2121,7 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [
     handleUndo,
+    handleRedo,
     navigateBy,
     folderImages.length,
     showHelp,
@@ -2867,6 +2899,14 @@ function App() {
                   title="Undo last click (⌘Z)"
                 >
                   <kbd>{MOD_KEY}Z</kbd>Undo
+                </button>
+                <button
+                  className="title-btn"
+                  onClick={handleRedo}
+                  disabled={redoStack.length === 0 || !canEdit}
+                  title="Redo (⌘⇧Z)"
+                >
+                  <kbd>{MOD_KEY}⇧Z</kbd>Redo
                 </button>
                 <button
                   className="title-btn primary"
