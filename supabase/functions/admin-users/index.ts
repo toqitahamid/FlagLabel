@@ -89,11 +89,29 @@ Deno.serve(async (req) => {
             r.role,
           ]),
         );
+        // last_sign_in_at freezes for weeks on persistent sessions; the
+        // admin_last_seen RPC (service-role only) folds in session refresh
+        // times from auth.sessions, which PostgREST can't reach directly.
+        const { data: seen, error: seenErr } = await admin.rpc(
+          "admin_last_seen",
+        );
+        if (seenErr) throw seenErr;
+        const seenById = new Map(
+          (seen ?? []).map(
+            (r: { user_id: string; last_seen: string | null }) => [
+              r.user_id,
+              r.last_seen,
+            ],
+          ),
+        );
         const users = all.map((u) => ({
           id: u.id,
           email: u.email ?? "",
           role: roleByEmail.get(u.email ?? "") ?? null,
-          last_sign_in_at: u.last_sign_in_at ?? null,
+          last_seen_at: seenById.get(u.id) ?? u.last_sign_in_at ?? null,
+          // Kept until the web frontend that reads last_seen_at is deployed;
+          // older clients still render this field.
+          last_sign_in_at: seenById.get(u.id) ?? u.last_sign_in_at ?? null,
         }));
         return json({ users });
       }

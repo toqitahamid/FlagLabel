@@ -10,7 +10,7 @@ export type AdminUser = {
   id: string;
   email: string;
   role: Role | null;
-  last_sign_in_at: string | null;
+  last_seen_at: string | null;
 };
 
 // Lowercase + trim so the same address is never stored under two casings (the

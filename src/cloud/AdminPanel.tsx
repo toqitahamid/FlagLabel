@@ -202,7 +202,7 @@ export function AdminPanel(props: AdminPanelProps) {
                       {isSelf && <span className="admin-self"> (you)</span>}
                     </span>
                     <span className="admin-ulast">
-                      last seen {formatLastSeen(u.last_sign_in_at)}
+                      last seen {formatLastSeen(u.last_seen_at)}
                     </span>
                     <select
                       className="admin-role-select"
