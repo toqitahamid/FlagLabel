@@ -8,17 +8,10 @@ FlagLabel is a Tauri v2 desktop app (React 19 + TypeScript frontend, Rust backen
 
 ## Commands
 
-```bash
-npm run tauri dev      # full dev loop: launches Vite on :1420, builds + runs the Rust app, opens the native window
-npm run dev            # Vite only (browser preview won't have Tauri APIs)
-npm run build          # tsc + vite build → dist/ (web assets only; doesn't bundle the app)
-npm run tauri build    # production bundle (.dmg / .msi / .exe / updater artifacts) into src-tauri/target/release/bundle
-```
+Standard `npm` scripts (see `package.json`). Two things that aren't obvious from them:
 
-```bash
-npm test               # vitest run — the unit suite over src/annotations/ (62 tests)
-npm run test:watch     # vitest in watch mode
-```
+- `npm run dev` is Vite only — a browser preview won't have Tauri APIs. Use `npm run tauri dev` for the real loop.
+- `npm run build` builds web assets only; `npm run tauri build` produces the actual installers.
 
 The pure annotation logic in `src/annotations/` is unit-tested with vitest; `src/App.tsx` (React/canvas glue) is not. There is no linter or formatter configured. TypeScript strictness comes from `tsc` during `npm run build` — note `noImplicitReturns` is **off**, so exhaustiveness in `switch`/`Record` maps is enforced manually with `never` guards, not by the compiler.
 
@@ -43,10 +36,7 @@ Key invariants:
 
 ### Rust backend (`src-tauri/src/lib.rs`)
 
-Three commands, intentionally minimal:
-- `write_text_file(path, content)` — creates parent dirs, writes UTF-8
-- `read_text_file(path)` — returns `Option<String>` (None if file missing, not an error)
-- `list_images_in_dir(path)` — sorted `.jpg/.jpeg/.png`, skips dotfiles
+Three commands, intentionally minimal — keep it that way. Note `read_text_file` returns `Option<String>`: a missing file is `None`, not an error.
 
 Image loading uses Tauri's `convertFileSrc` against the asset protocol (configured with `scope: ["**"]` in `tauri.conf.json`) — the frontend never reads image bytes through a custom command.
 
@@ -54,26 +44,14 @@ Plugins enabled: `dialog`, `opener`, `store`, `updater`, `process`. Permissions 
 
 ### Persistence
 
-- **Per-image annotations**: JSON file `<site>__<imagestem>.json` in the user-chosen clicks folder. Schema v2 carries `schema_version`, `reference_dimensions_cm`, and one array per annotation type (`wire_ground_points`, `flag_vertical_spans`, `flag_horizontal_spans`, `flag_to_ground_spans`); full schema is documented in README and built by `src/annotations/schema.ts`. v0.2.0 dropped the v1 single-`clicks` format — older files load as empty. `site` is the parent folder name of the image.
+- **Per-image annotations**: JSON file `<site>__<imagestem>.json` in the user-chosen clicks folder, where `site` is the parent folder name of the image. Full schema v2 is documented in README and built by `src/annotations/schema.ts`. v0.2.0 dropped the v1 single-`clicks` format — older files load as empty.
 - **App settings**: `tauri-plugin-store` writes `settings.json` in the OS app-data dir. Currently just `clicks_dir`.
 
 ## Release process
 
-Releases are **automatic on a version bump pushed to `main`** — no tag step. `.github/workflows/release.yml` triggers on a push to `main` that touches `package.json`, `src-tauri/tauri.conf.json`, or `src-tauri/Cargo.toml`. A `check` job reads the version from `package.json`, fails loudly if the three version files disagree, and skips if a release for that version already exists (so re-pushing `main` is idempotent). When the version is new it runs `tauri-action` on macOS-latest (aarch64) and windows-latest in parallel and **publishes** a live GitHub release (tag `vX.Y.Z`) with the matching CHANGELOG section as the body, uploading installers + `latest.json` for the updater.
+Releases fire **automatically on a version bump pushed to `main`** and **publish live immediately** — no tag step, no draft, no manual gate, no smoke-test checkpoint before users get the auto-update. Verify a risky release on a branch/`workflow_dispatch` run first.
 
-To cut a release:
-1. Bump the version in **three** files — they must match exactly, or the `check` job fails the run:
-   - `package.json` (`version`)
-   - `src-tauri/tauri.conf.json` (`version`)
-   - `src-tauri/Cargo.toml` (`[package].version`) — and run `cargo check` or `npm run tauri build` once so `Cargo.lock` updates
-2. Add a `## vX.Y.Z` section to `CHANGELOG.md`. The release workflow extracts text between `## vX.Y.Z` and the next `## v` heading via awk — the header format must be exact, or the release body falls back to a generic message.
-3. Commit and push to `main`. That's it — the workflow tags, builds, and publishes automatically.
-
-The release **publishes live immediately** (no draft/manual gate), so the auto-updater picks it up as soon as the build finishes. There is no smoke-test checkpoint before users see it — verify on a branch/`workflow_dispatch` run first if a release is risky. The updater endpoint is `https://github.com/toqitahamid/FlagLabel/releases/latest/download/latest.json`. To re-run a build manually (e.g. after a transient CI failure) without bumping again, use the **Run workflow** button on the Actions tab (`workflow_dispatch`); it re-derives the version from `package.json` and skips if that release already exists.
-
-Two release-time gotchas that have bitten before:
-- The `TAURI_SIGNING_PRIVATE_KEY` secret must be the **raw** minisign key with no trailing newline and no double-base64 wrapping. If macOS builds fail with a base64 decode error, the secret is malformed.
-- The signing key's pubkey embedded in `tauri.conf.json` (`plugins.updater.pubkey`) must match the private key — rotating one without the other breaks auto-update on already-installed clients.
+Full procedure (three version files that must match, CHANGELOG header format, signing-key gotchas, re-running a build): see the `release` skill at `.claude/skills/release/SKILL.md`.
 
 ## macOS distribution
 
