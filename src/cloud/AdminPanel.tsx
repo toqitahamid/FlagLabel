@@ -5,6 +5,10 @@ import {
   setRole,
   removeUser,
   isValidEmail,
+  listMaskToolUsers,
+  grantMaskTools,
+  revokeMaskTools,
+  normalizeEmail,
   type AdminUser,
   type Role,
 } from "./admin-users";
@@ -17,6 +21,10 @@ import {
 
 type AdminPanelProps = {
   currentEmail: string;
+  // Whether the VIEWER holds the mask tools (`has_mask_tools()`), which is what
+  // gates the mask-tools section below — not the admin role. Membership is
+  // managed by members, so an admin without the tools must not see it at all.
+  maskTools: boolean;
   onClose: () => void;
 };
 
@@ -31,7 +39,7 @@ function formatLastSeen(iso: string | null): string {
 }
 
 export function AdminPanel(props: AdminPanelProps) {
-  const { currentEmail, onClose } = props;
+  const { currentEmail, maskTools, onClose } = props;
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +64,50 @@ export function AdminPanel(props: AdminPanelProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Mask-tool holders, cross-referenced against `users` by normalized email.
+  // Deliberately its OWN loading/error state and its own refetch: reusing
+  // `refresh` would blank the whole user list behind "Loading users…" after every
+  // grant. Only fetched when the viewer holds the tools — the RPC returns an
+  // empty set for anyone else anyway, which would read as "nobody has them".
+  // `maskLoaded` is a load-ONCE flag, not a per-request spinner: the placeholder
+  // shows until the first fetch lands, and a post-grant refetch leaves the rows
+  // in place instead of blanking them (`busy` already disables the buttons).
+  const [maskEmails, setMaskEmails] = useState<Set<string>>(new Set());
+  const [maskLoaded, setMaskLoaded] = useState(false);
+  const [maskError, setMaskError] = useState<string | null>(null);
+
+  const refreshMaskUsers = useCallback(async () => {
+    setMaskError(null);
+    try {
+      setMaskEmails(new Set(await listMaskToolUsers()));
+    } catch (e) {
+      setMaskError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMaskLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (maskTools) void refreshMaskUsers();
+  }, [maskTools, refreshMaskUsers]);
+
+  const onToggleMaskTools = useCallback(
+    async (u: AdminUser, hasTools: boolean) => {
+      setBusy(true);
+      setMaskError(null);
+      try {
+        if (hasTools) await revokeMaskTools(u.email);
+        else await grantMaskTools(u.email);
+        await refreshMaskUsers();
+      } catch (e) {
+        setMaskError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [refreshMaskUsers],
+  );
 
   // Escape closes the panel when not mid-mutation.
   useEffect(() => {
@@ -234,6 +286,65 @@ export function AdminPanel(props: AdminPanelProps) {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {maskTools && (
+            <div className="admin-section">
+              <div className="admin-section-title">Mask tool access</div>
+              <p className="admin-hint">
+                Who can use the box, mask and polygon tools. Only people who
+                already have them can grant or revoke. A newly granted person
+                gets the tools the next time they load FlagLabel.
+              </p>
+
+              {maskError && (
+                <div className="auth-error" role="alert">
+                  {maskError}
+                </div>
+              )}
+
+              {loading || !maskLoaded ? (
+                <div className="admin-empty">Loading mask tool access…</div>
+              ) : users.length === 0 ? (
+                <div className="admin-empty">No users yet.</div>
+              ) : (
+                <div className="admin-userlist">
+                  {users.map((u) => {
+                    const isSelf =
+                      u.email.toLowerCase() === currentEmail.toLowerCase();
+                    const hasTools = maskEmails.has(normalizeEmail(u.email));
+                    return (
+                      <div className="admin-userrow" key={u.id}>
+                        <span className="admin-uemail">
+                          {u.email}
+                          {isSelf && <span className="admin-self"> (you)</span>}
+                        </span>
+                        <span className="admin-ulast">
+                          {hasTools ? "has mask tools" : "no mask tools"}
+                        </span>
+                        {/* The server refuses self-revoke ("cannot revoke
+                            yourself"), so don't offer it. */}
+                        {!(isSelf && hasTools) && (
+                          <button
+                            type="button"
+                            className={hasTools ? "admin-remove" : "admin-grant"}
+                            disabled={busy}
+                            onClick={() => void onToggleMaskTools(u, hasTools)}
+                            title={
+                              hasTools
+                                ? `Revoke mask tools from ${u.email}`
+                                : `Grant mask tools to ${u.email}`
+                            }
+                          >
+                            {hasTools ? "Revoke" : "Grant"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

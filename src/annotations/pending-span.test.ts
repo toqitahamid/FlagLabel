@@ -47,3 +47,36 @@ describe("pendingSpanReducer", () => {
     expect(pendingSpanReducer(IDLE, { type: "cancel" })).toEqual(IDLE);
   });
 });
+
+describe("pendingSpanReducer — box placement", () => {
+  it("carries the \"box\" placement type through firstClick (same reducer as spans)", () => {
+    const next = pendingSpanReducer(IDLE, {
+      type: "firstClick",
+      point: { u: 90, v: 140 },
+      spanType: "box",
+      transect: "R",
+      distance: 6,
+    });
+    expect(next).toEqual({
+      kind: "awaitingSecond",
+      type: "box",
+      first: { u: 90, v: 140 },
+      transect: "R",
+      distance: 6,
+    });
+  });
+
+  it("secondClick and cancel return a pending box to idle", () => {
+    const awaiting: PendingSpan = {
+      kind: "awaitingSecond",
+      type: "box",
+      first: { u: 90, v: 140 },
+      transect: "R",
+      distance: 6,
+    };
+    expect(
+      pendingSpanReducer(awaiting, { type: "secondClick", point: { u: 10, v: 20 } })
+    ).toEqual(IDLE);
+    expect(pendingSpanReducer(awaiting, { type: "cancel" })).toEqual(IDLE);
+  });
+});

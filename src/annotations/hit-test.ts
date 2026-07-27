@@ -4,6 +4,12 @@ import type { Annotation, Point } from "./model";
 // auto-widens if new annotation kinds are added.
 export type ActiveType = Annotation["kind"];
 
+function distSq(u: number, v: number, point: Point): number {
+  const dx = u - point.u;
+  const dy = v - point.v;
+  return dx * dx + dy * dy;
+}
+
 // Squared distance from a click to an annotation, using only annotations whose
 // kind matches the active type. For a span this is the distance to the NEARER
 // endpoint (endpoint-based, not point-to-segment) so clicking near either end
@@ -15,16 +21,39 @@ function distanceSqToActive(
 ): number | null {
   if (a.kind !== activeType) return null;
   if (a.kind === "wire_ground") {
-    const dx = a.u - point.u;
-    const dy = a.v - point.v;
-    return dx * dx + dy * dy;
+    return distSq(a.u, a.v, point);
+  }
+  if (a.kind === "flag_mask") {
+    // A mask has no endpoints — the grabbable geometry is its outline, so the
+    // nearest ring VERTEX wins. (Not point-in-polygon: a mask at 15 m is a few
+    // pixels across, and an interior test would make it essentially unclickable
+    // while an outline test stays consistent with every other kind's
+    // nearest-feature rule.) Empty rings are unreachable — parseAnnotationFile
+    // rejects them and the accept path never builds one — so this returns
+    // Infinity rather than 0, which would hit-test as a bullseye.
+    let best = Infinity;
+    for (const ring of a.rings) {
+      for (const [u, v] of ring) {
+        const d2 = distSq(u, v, point);
+        if (d2 < best) best = d2;
+      }
+    }
+    return best;
+  }
+  if (a.kind === "flag_box") {
+    // A box stores only two opposite corners, but all FOUR are grabbable — the
+    // other two are implied by the axis-aligned rect. Without this branch the box
+    // would fall through to the span case below and silently be selectable from
+    // only its top-left and bottom-right.
+    return Math.min(
+      distSq(a.u1, a.v1, point),
+      distSq(a.u2, a.v1, point),
+      distSq(a.u2, a.v2, point),
+      distSq(a.u1, a.v2, point)
+    );
   }
   // span (vertical_span / horizontal_span / flag_to_ground_span): nearer endpoint wins
-  const dx1 = a.u1 - point.u;
-  const dy1 = a.v1 - point.v;
-  const dx2 = a.u2 - point.u;
-  const dy2 = a.v2 - point.v;
-  return Math.min(dx1 * dx1 + dy1 * dy1, dx2 * dx2 + dy2 * dy2);
+  return Math.min(distSq(a.u1, a.v1, point), distSq(a.u2, a.v2, point));
 }
 
 // Strict active-mode hit-test. Only annotations whose kind matches `activeType`

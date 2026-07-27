@@ -70,3 +70,64 @@ export async function setRole(id: string, role: Role): Promise<void> {
 export async function removeUser(id: string): Promise<void> {
   await invokeAdmin("remove", { id });
 }
+
+// ---- Mask-tool membership ----
+//
+// Unlike everything above, these three go straight to Postgres RPCs — no Edge
+// Function, no service-role key. Membership is managed by MEMBERS, not admins:
+// `grant_mask_tools` / `revoke_mask_tools` raise unless the CALLER already holds
+// mask tools, and `list_mask_tool_users` returns nothing for a caller who
+// doesn't (the membership table itself is RLS-locked with no policies, so these
+// SECURITY DEFINER functions are the only way in).
+
+// Postgres `raise exception` messages arrive as the PostgrestError `message`,
+// sometimes prefixed by the function context. The two the server raises are
+// already user-readable, so pass them through verbatim (notably
+// "cannot revoke yourself"); only the bare authorization one gets expanded into
+// a sentence. Same intent as `invokeAdmin` lifting the function's `{ error }`
+// body over the generic transport message.
+export function maskToolsError(message: string): Error {
+  if (message.includes("not authorized")) {
+    return new Error(
+      "Only someone who already has the mask tools can change this access.",
+    );
+  }
+  return new Error(message);
+}
+
+// The emails that currently have mask tools, normalized for case-insensitive
+// cross-referencing against the user list. `setof text` comes back as bare
+// strings; the single-column-record shape is tolerated too so a future
+// signature change can't silently yield an all-empty list.
+export async function listMaskToolUsers(): Promise<string[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc("list_mask_tool_users");
+  if (error) throw maskToolsError(error.message);
+  const rows = (data ?? []) as unknown[];
+  return rows
+    .map((row) =>
+      typeof row === "string"
+        ? row
+        : String(
+            (row as Record<string, unknown> | null)?.list_mask_tool_users ?? "",
+          ),
+    )
+    .filter((email) => email !== "")
+    .map(normalizeEmail);
+}
+
+export async function grantMaskTools(email: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.rpc("grant_mask_tools", {
+    target_email: normalizeEmail(email),
+  });
+  if (error) throw maskToolsError(error.message);
+}
+
+export async function revokeMaskTools(email: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await supabase.rpc("revoke_mask_tools", {
+    target_email: normalizeEmail(email),
+  });
+  if (error) throw maskToolsError(error.message);
+}

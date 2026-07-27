@@ -114,3 +114,27 @@ describe("summarizeProgress", () => {
     expect(result.perSite.cam03).toEqual({ annotated: 0, total: 1 });
   });
 });
+
+describe("deriveSummary with flag masks", () => {
+  it("counts masks toward annotation_count (a mask-only image is annotated)", () => {
+    const file = buildAnnotationFile(
+      { site: "s", image: "a.jpg", image_w: 10, image_h: 10 },
+      [
+        {
+          kind: "flag_mask",
+          rings: [[[1, 1], [2, 2], [3, 1]]],
+          score: 0.9,
+          transect: "L",
+          distance: 1,
+        },
+      ],
+      "0.4.0",
+      "2026-06-03T00:00:00.000Z",
+    );
+    expect(deriveSummary(file, "me@example.com")).toEqual({
+      labeler: "me@example.com",
+      status: "annotated",
+      annotation_count: 1,
+    });
+  });
+});

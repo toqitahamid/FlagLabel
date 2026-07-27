@@ -79,3 +79,35 @@ describe("findCollision — type-scoped (no cross-kind false positives)", () => 
     expect(findCollision([wg("C", 6)], { transect: "C", distance: 6, kind: "vertical_span" })).toBeNull();
   });
 });
+
+const fbox = (
+  transect: Transect,
+  distance: number
+): Annotation => ({ kind: "flag_box", u1: 0, v1: 0, u2: 30, v2: 50, transect, distance });
+
+describe("findCollision — flag_box", () => {
+  it("two boxes on the same flag collide (same {transect, distance, kind})", () => {
+    expect(
+      findCollision([fbox("L", 3)], { transect: "L", distance: 3, kind: "flag_box" })
+    ).toBe(0);
+  });
+
+  it("boxes on different flags do not collide", () => {
+    expect(
+      findCollision([fbox("L", 3)], { transect: "L", distance: 4, kind: "flag_box" })
+    ).toBeNull();
+    expect(
+      findCollision([fbox("L", 3)], { transect: "C", distance: 3, kind: "flag_box" })
+    ).toBeNull();
+  });
+
+  it("a box legitimately coexists with the points and spans on the same flag", () => {
+    const anns = [wg("L", 3), vspan("L", 3), hspan("L", 3), fgspan("L", 3)];
+    // Nothing at L3 is a flag_box, so placing one is not a collision.
+    expect(findCollision(anns, { transect: "L", distance: 3, kind: "flag_box" })).toBeNull();
+    // ...and adding the box does not make the other four kinds collide with it.
+    const withBox = [...anns, fbox("L", 3)];
+    expect(findCollision(withBox, { transect: "L", distance: 3, kind: "wire_ground" })).toBe(0);
+    expect(findCollision(withBox, { transect: "L", distance: 3, kind: "flag_box" })).toBe(4);
+  });
+});

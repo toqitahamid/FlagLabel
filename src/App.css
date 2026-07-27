@@ -904,6 +904,12 @@ body,
   grid-template-columns: 1fr 1fr;
 }
 
+/* With an odd number of tools the last one would sit as a half-width orphan in
+   its own row; let it span both columns instead. */
+.tool-grid .segmented-btn:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .tool-grid .segmented-btn {
   display: flex;
   align-items: center;
@@ -966,6 +972,91 @@ body,
   letter-spacing: 0.02em;
   color: var(--text-tertiary);
   min-height: 2.9em;
+}
+
+/* Inline keycaps inside the help line (the mask prompt hints name several keys).
+   Sized to the 10px mono body so they don't stretch the reserved two lines. */
+.tool-help kbd {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 1px 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-secondary);
+}
+
+/* SAM3 segmentation controls in the rail. The candidate readout and the
+   Cycle / Accept / Cancel row only mount while a prompt session is live; the
+   service-URL input is always present so it can be fixed before anything is
+   selected. */
+
+.mask-candidates {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.mask-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Three equal buttons, sized down from the default .btn so they fit the rail's
+   width without wrapping. */
+.mask-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.mask-actions .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  font-size: 11px;
+}
+
+.mask-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mask-actions .btn kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  color: var(--text-tertiary);
+}
+
+.mask-error {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--danger-soft);
+}
+
+.sam3-url {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  outline: none;
+  min-width: 0;
+}
+
+.sam3-url:focus {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
 }
 
 /* Distance stepper: a large tabular readout flanked by ▲ / ▼ steppers. Still
@@ -2684,4 +2775,31 @@ canvas {
 }
 .admin-remove:not(:disabled):hover {
   background: rgba(224, 106, 106, 0.12);
+}
+.admin-section {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle, #2a2a2a);
+}
+.admin-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #eee);
+}
+.admin-grant {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle, #2a2a2a);
+  background: transparent;
+  color: var(--accent, #34a382);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.admin-grant:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.admin-grant:not(:disabled):hover {
+  background: rgba(52, 163, 130, 0.12);
 }

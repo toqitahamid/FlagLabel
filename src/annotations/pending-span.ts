@@ -1,13 +1,15 @@
-import type { Point, SpanType, Transect } from "./model";
+import type { PlacementType, Point, Transect } from "./model";
 
-// Global pending-span state. A span is placed with two sequential clicks; the
-// first click moves us to `awaitingSecond`, the second completes it (the caller
-// reads `first` + the new point, canonicalizes, and pushes the annotation).
+// Global pending-span state. A span or box is placed with two sequential clicks;
+// the first click moves us to `awaitingSecond`, the second completes it (the
+// caller reads `first` + the new point, canonicalizes, and pushes the
+// annotation). `type` is a PlacementType, so "box" rides the same reducer as the
+// three span types — the caller picks canonicalizeSpan vs canonicalizeBox.
 export type PendingSpan =
   | { kind: "idle" }
   | {
       kind: "awaitingSecond";
-      type: SpanType;
+      type: PlacementType;
       first: Point;
       transect: Transect;
       distance: number;
@@ -17,7 +19,7 @@ export type PendingSpanEvent =
   | {
       type: "firstClick";
       point: Point;
-      spanType: SpanType;
+      spanType: PlacementType;
       transect: Transect;
       distance: number;
     }

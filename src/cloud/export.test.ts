@@ -261,3 +261,54 @@ describe("round-trip through serialize + parse", () => {
     expect(reparsed).toHaveLength(annotations.length);
   });
 });
+
+// ─── flag_masks through the cloud path ───────────────────────────────────────
+//
+// Masks need no Supabase schema change: the whole AnnotationFile is stored in one
+// `data` jsonb column and export routes through buildAnnotationFile /
+// parseAnnotationFile. These tests pin that — including the jsonb key-reordering
+// case canonicalizeAnnotationFile exists to fix.
+
+describe("flag_masks round-trip through the export path", () => {
+  const MASK: Annotation = {
+    kind: "flag_mask",
+    rings: [
+      [
+        [1225, 1982],
+        [1240, 1982],
+        [1240, 2062],
+      ],
+    ],
+    score: 0.94,
+    transect: "L",
+    distance: 1,
+  };
+
+  it("canonicalizeAnnotationFile preserves masks and stays schema 2", () => {
+    const file = buildAnnotationFile(META, [MASK], "0.4.0", "2026-06-03T00:00:00.000Z");
+    const canonical = canonicalizeAnnotationFile(file);
+    expect(canonical.schema_version).toBe(2);
+    expect(canonical.flag_masks).toEqual(file.flag_masks);
+    expect(canonical.created_at).toBe("2026-06-03T00:00:00.000Z");
+    expect(canonical.app_version).toBe("0.4.0");
+  });
+
+  it("restores desktop key order after a jsonb-style key shuffle", () => {
+    const file = buildAnnotationFile(META, [MASK], "0.4.0", "2026-06-03T00:00:00.000Z");
+    // Simulate Postgres jsonb: same content, arbitrary key order.
+    const shuffled = Object.fromEntries(
+      Object.entries(file).reverse(),
+    ) as typeof file;
+    expect(serializeAnnotationFile(canonicalizeAnnotationFile(shuffled))).toBe(
+      serializeAnnotationFile(file),
+    );
+  });
+
+  it("a mask-only image is a real ZIP entry (not treated as empty)", () => {
+    const file = buildAnnotationFile(META, [MASK], "0.4.0", "2026-06-03T00:00:00.000Z");
+    const entries = buildZipEntries([file]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].name).toBe("cam02/IMG_0001.json");
+    expect(parseAnnotationFile(JSON.parse(entries[0].content))).toEqual([MASK]);
+  });
+});

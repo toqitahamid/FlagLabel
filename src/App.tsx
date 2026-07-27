@@ -29,10 +29,17 @@ import {
   type WireGroundPoint,
   type Transect,
   type Counts,
-  type SpanType,
+  type FlagBox,
+  type FlagMask,
+  type MaskRing,
+  type PlacementType,
+  type SpanEndpoints,
   countsFromAnnotations,
   countsByTransect,
   canonicalizeSpan,
+  canonicalizeBox,
+  maskBounds,
+  roundRings,
 } from "./annotations/model";
 import {
   buildAnnotationFile,
@@ -47,9 +54,33 @@ import {
   pendingSpanReducer,
   IDLE as PENDING_IDLE,
 } from "./annotations/pending-span";
+import {
+  pendingPolygonReducer,
+  canClose,
+  polygonRings,
+  POLYGON_IDLE,
+  POLYGON_MIN_VERTICES,
+} from "./annotations/pending-polygon";
 import { findCollision } from "./annotations/collision";
+import {
+  type Candidate,
+  type Sam3Client,
+  createSam3Client,
+  segmentWithReencode,
+  Sam3UnreachableError,
+  SAM3_DEFAULT_BASE_URL,
+} from "./sam3/client";
+import {
+  pendingPromptReducer,
+  promptPoints,
+  PROMPT_IDLE,
+} from "./sam3/pending-prompt";
 import { TauriStorageBackend } from "./cloud/tauri-backend";
-import { SupabaseStorageBackend, fetchIsAdmin } from "./cloud/supabase-backend";
+import {
+  SupabaseStorageBackend,
+  fetchIsAdmin,
+  fetchHasMaskTools,
+} from "./cloud/supabase-backend";
 import {
   serializeAnnotationFile,
   canonicalizeAnnotationFile,
@@ -79,32 +110,51 @@ import { useAccount } from "./cloud/AuthGate";
 // Active annotation type ↔ annotation kind mapping. "wire_ground" is the
 // classic dot; "vertical_span" is the two-click flag vertical span;
 // "horizontal_span" is the two-click flag horizontal span;
-// "flag_to_ground_span" is the two-click flag-body-top → wire–ground span.
-type ActiveAnnoType = ActiveType;
-// Annotation kind → SpanType (or null for the non-span wire-ground kind). A
-// FULL Record over every kind, so adding a new span kind hard-errors here until
-// an entry is added — matching SPAN_KIND_FOR / SPAN_LABEL_SUFFIX /
-// canonicalizeSpan. The call site's `if (!spanType) return;` handles the null
-// (wire-ground) case unchanged.
-const SPAN_TYPE_FOR: Record<ActiveAnnoType, SpanType | null> = {
+// "flag_to_ground_span" is the two-click flag-body-top → wire–ground span;
+// "flag_box" is the two-click hand-drawn box around one flag; "flag_mask" is the
+// SAM3 segmentation accepted from a box (not click-placed at all — its tool slot
+// exists so a committed mask can be selected and deleted, since hitTest is
+// active-type-gated).
+// Tool identity in the rail: every annotation kind gets a slot, PLUS "polygon" —
+// the hand-drawn mask tool. It is a distinct TOOL but NOT a distinct kind: closing
+// its outline commits a `flag_mask`, exactly like accepting a SAM3 candidate does.
+// So it can't come from `ActiveType` (= Annotation["kind"]) and is added here.
+// Everywhere a real kind is required (hitTest above all) the call sites narrow it
+// away first — see handleCanvasClick / handleZoomClick.
+type ActiveAnnoType = ActiveType | "polygon";
+// Annotation kind → PlacementType (or null for kinds that aren't placed by two
+// clicks). A FULL Record over every kind, so adding a new two-click kind
+// hard-errors here until an entry is added — matching SPAN_KIND_FOR /
+// SPAN_LABEL_SUFFIX. The call site's `if (!spanType) return;` handles the null
+// case unchanged (wire-ground, which is one click, and flag_mask, which is
+// produced by the model rather than clicked).
+const SPAN_TYPE_FOR: Record<ActiveAnnoType, PlacementType | null> = {
   wire_ground: null,
   vertical_span: "vertical",
   horizontal_span: "horizontal",
   flag_to_ground_span: "flag_to_ground",
+  flag_box: "box",
+  flag_mask: null,
+  // The polygon tool places an UNBOUNDED number of vertices, so it does not ride
+  // the two-click pending-span reducer at all — see annotations/pending-polygon.
+  polygon: null,
 };
 
-// SpanType → annotation kind. Keyed on `SpanType` (a full Record), so adding a
-// new span type forces a matching entry here at compile time. The value is
-// narrowed to the span kinds so a completed span object typechecks as a member
-// of the union without widening `kind` back to all annotation kinds.
-const SPAN_KIND_FOR: Record<SpanType, Span["kind"]> = {
+// PlacementType → annotation kind. Keyed on `PlacementType` (a full Record), so
+// adding a new two-click geometry forces a matching entry here at compile time.
+// The value is narrowed to the two-endpoint kinds so a completed span/box object
+// typechecks as a member of the union without widening `kind` back to all kinds.
+const SPAN_KIND_FOR: Record<PlacementType, Span["kind"]> = {
   vertical: "vertical_span",
   horizontal: "horizontal_span",
   flag_to_ground: "flag_to_ground_span",
+  box: "flag_box",
 };
 
-// The annotation-type selector, in keyboard order (Q W / E R → a 2×2 grid).
-// One entry per kind keeps the rail buttons DRY and in sync with the union.
+// The annotation-type selector, in keyboard order (Q W / E R / T Y / P → a
+// 2-column grid; an ODD last entry spans both columns, see .tool-grid in App.css —
+// which is why the 7th tool, Polygon, renders full-width on its own row).
+// One entry per tool keeps the rail buttons DRY and in sync with the union.
 const ANNOTATION_TOOLS: {
   kind: ActiveAnnoType;
   key: string;
@@ -140,6 +190,29 @@ const ANNOTATION_TOOLS: {
     title: "Flag-to-ground span (R): the flag top and the wire base at the ground · click either first",
     hint: "Flag top and wire base at the ground · 2 clicks, either order.",
   },
+  {
+    kind: "flag_box",
+    key: "T",
+    label: "Box",
+    title: "Flag box (T): a box around the whole flag · click two opposite corners",
+    hint: "Two opposite corners of a box around the flag · 2 clicks, any corner first.",
+  },
+  {
+    kind: "flag_mask",
+    key: "Y",
+    label: "Mask",
+    title:
+      "Flag mask (Y): select/delete accepted masks. To create one, select a box and press M",
+    hint: "Select an existing mask. To make one: pick a box (T), select it, press M.",
+  },
+  {
+    kind: "polygon",
+    key: "P",
+    label: "Polygon",
+    title:
+      "Hand-drawn polygon (P): click the flag outline vertex by vertex, ↵ to close · the manual fallback when SAM3 can't segment a small or distant flag",
+    hint: "Click the outline vertex by vertex · ↵ closes it (3+ points) · Del undoes one · Esc cancels.",
+  },
 ];
 
 // Placement hint per kind (for the live rail help line), derived from the tool
@@ -150,6 +223,17 @@ const KIND_HINT = ANNOTATION_TOOLS.reduce(
   (m, t) => ((m[t.kind] = t.hint), m),
   {} as Record<ActiveAnnoType, string>
 );
+
+// Tools still restricted to an admin on the web build: box (T), mask (Y) and the
+// hand-drawn polygon (P). The original four (Q / W / E / R) are open to every
+// labeler. Restricted means CREATION only — existing boxes and masks placed by an
+// admin still render, round-trip through save, and are never dropped for anyone;
+// see the load/save paths, which never filter by kind.
+const ADMIN_ONLY_TOOLS: ReadonlySet<ActiveAnnoType> = new Set<ActiveAnnoType>([
+  "flag_box",
+  "flag_mask",
+  "polygon",
+]);
 
 type LoadedImage = {
   path: string;
@@ -190,6 +274,9 @@ const CROSSHAIR_GAP = 7;
 const SETTINGS_FILE = "settings.json";
 const SETTINGS_KEY_CLICKS_DIR = "clicks_dir";
 const SETTINGS_KEY_ONBOARDED = "onboarded";
+// Base URL of the SAM3 segmentation service (the local end of an SSH tunnel to
+// the GPU box). Persisted so a lab with a different tunnel port sets it once.
+const SETTINGS_KEY_SAM3_URL = "sam3_url";
 
 function pathBasename(p: string): string {
   return p.split("/").pop() ?? p;
@@ -351,7 +438,17 @@ function fmtDistance(d: number): string {
   return Number.isInteger(d) ? String(d) : d.toFixed(1);
 }
 
-const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
+// `adminOnly` sections document the restricted tools (see ADMIN_ONLY_TOOLS) and are
+// dropped for everyone else — the overlay must never advertise a key that does
+// nothing.
+const HELP_SECTIONS: {
+  title: string;
+  rows: [string, string][];
+  adminOnly?: true;
+  // Replacement for `rows[0]` when the restricted tools are unavailable, for a
+  // section that is otherwise shared by both roles.
+  firstRowWithoutAdminTools?: [string, string];
+}[] = [
   {
     title: "File",
     rows: [
@@ -369,8 +466,12 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
   },
   {
     title: "Labels",
+    firstRowWithoutAdminTools: [
+      "Annotation type wire–ground / vert. span / horiz. span / flag→ground",
+      "Q / W / E / R",
+    ],
     rows: [
-      ["Annotation type wire–ground / vert. span / horiz. span / flag→ground", "Q / W / E / R"],
+      ["Annotation type wire–ground / vert. span / horiz. span / flag→ground / box / mask / polygon", "Q / W / E / R / T / Y / P"],
       ["Transect L / C / R", "1 / 2 / 3"],
       ["Distance ± 1 m", "↑ / ↓"],
       ["Distance ± 0.5 m", "⇧↑ / ⇧↓"],
@@ -398,6 +499,40 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
       ["Place flag-top endpoint, then ground endpoint", "click ×2"],
       ["Endpoints span canvas + zoom panel", "either surface"],
       ["Cancel a half-placed span", "Esc"],
+    ],
+  },
+  {
+    title: "Flag box (T)",
+    adminOnly: true,
+    rows: [
+      ["Click two opposite corners", "click ×2"],
+      ["Live rubber-band preview between clicks", "move mouse"],
+      ["Cancel a half-drawn box", "Esc"],
+    ],
+  },
+  {
+    title: "Flag mask (Y · SAM3)",
+    adminOnly: true,
+    rows: [
+      ["Segment the selected flag box", "M"],
+      ["Add a positive point (refine)", "click"],
+      ["Add a negative point (refine)", "⇧click"],
+      ["Undo the last refinement point", "Del / ⌫"],
+      ["Cycle candidate masks", "C"],
+      ["Accept the shown candidate", "↵"],
+      ["Discard without accepting", "Esc"],
+      ["Select / delete an accepted mask", "Y, then click"],
+    ],
+  },
+  {
+    title: "Hand-drawn polygon (P)",
+    adminOnly: true,
+    rows: [
+      ["Add a vertex (canvas or zoom panel)", "click"],
+      ["Close the outline as a mask (3+ vertices)", "↵"],
+      ["Remove the last vertex", "Del / ⌫"],
+      ["Discard the whole outline", "Esc"],
+      ["Select / delete it afterwards", "Y, then click"],
     ],
   },
   {
@@ -436,16 +571,27 @@ const HELP_SECTIONS: { title: string; rows: [string, string][] }[] = [
 function KeyboardHelp({
   onClose,
   appVersion,
+  adminTools,
   onReplayWelcome,
   onStartTour,
   onResetChecklist,
 }: {
   onClose: () => void;
   appVersion: string;
+  // Whether the viewer has the restricted tools (see ADMIN_ONLY_TOOLS); when they
+  // don't, their sections and keys are left out entirely.
+  adminTools: boolean;
   onReplayWelcome?: () => void;
   onStartTour?: () => void;
   onResetChecklist?: () => void;
 }) {
+  const sections = adminTools
+    ? HELP_SECTIONS
+    : HELP_SECTIONS.filter((s) => !s.adminOnly).map((s) =>
+        s.firstRowWithoutAdminTools
+          ? { ...s, rows: [s.firstRowWithoutAdminTools, ...s.rows.slice(1)] }
+          : s
+      );
   return (
     <div className="help-backdrop" onClick={onClose}>
       <div
@@ -489,7 +635,7 @@ function KeyboardHelp({
         </div>
 
         <div className="help-grid">
-          {HELP_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <div key={section.title} className="help-section">
               <div className="help-section-title">{section.title}</div>
               <dl className="help-rows">
@@ -521,6 +667,9 @@ function KeyboardHelp({
 type PendingCollision = {
   candidate: Annotation;
   existingIndex: number;
+  // Set by mask-accept: the prompt flag_box to auto-delete IF the mask commits
+  // (Replace or Keep both). On Cancel nothing commits, so the box survives.
+  alsoRemoveIdx?: number;
 } | null;
 
 // Blocking three-way confirm shown when a placement would duplicate an existing
@@ -611,16 +760,34 @@ function drawMarker(
 
 const SPAN_TICK_HALF = 7;
 
-// The span members of the Annotation union (everything that has endpoints).
+// The two-endpoint members of the Annotation union: the three spans plus the box.
 type Span = Extract<Annotation, { u1: number }>;
 
-// Span kind → label suffix. Keyed on the span kinds (a full Record), so a new
-// span type must add its suffix here at compile time.
+// The two-endpoint kinds that draw as a LINE — i.e. every Span except the box,
+// which draws as a rectangle. drawSpan and SPAN_DASH are keyed on this on
+// purpose: it makes every render loop fail to compile until it branches the box
+// out to drawBox, instead of silently drawing a box as its diagonal.
+type LineSpan = Exclude<Span, FlagBox>;
+
+// Span/box kind → label suffix. Keyed on all two-endpoint kinds (a full Record),
+// so a new one must add its suffix here at compile time.
 const SPAN_LABEL_SUFFIX: Record<Span["kind"], string> = {
   vertical_span: "V",
   horizontal_span: "H",
   flag_to_ground_span: "G",
+  flag_box: "B",
 };
+
+// Label suffix for a mask. Not in SPAN_LABEL_SUFFIX because that Record is keyed
+// on the two-endpoint kinds (`Span["kind"]`), which excludes flag_mask by
+// construction — see the `Span` alias above.
+const MASK_LABEL_SUFFIX = "M";
+
+// The `score` a HAND-DRAWN mask carries. 1 by convention, and reserved for hand
+// drawing: a SAM3 candidate's score is model-produced and < 1 in practice, so
+// `score === 1` is how a downstream consumer tells a traced outline from a
+// segmented one. Documented in README's output-format section too.
+const HAND_DRAWN_MASK_SCORE = 1;
 
 // Human-readable name for each annotation kind, used in the collision-confirm
 // message (e.g. "L3 vertical span already exists"). Keyed on the full kind union
@@ -630,19 +797,39 @@ const KIND_NAME: Record<Annotation["kind"], string> = {
   vertical_span: "vertical span",
   horizontal_span: "horizontal span",
   flag_to_ground_span: "flag-to-ground span",
+  flag_box: "flag box",
+  flag_mask: "flag mask",
 };
 
-// Dash pattern for each span kind. Empty array = solid line. flag_to_ground
+// Dash pattern for each line-span kind. Empty array = solid line. flag_to_ground
 // renders dashed so it reads as distinct from a vertical span that may share
-// its top endpoint. Keyed on span kinds (full Record) so new kinds declare
-// their style here at compile time.
+// its top endpoint. Keyed on LineSpan kinds (full Record) so new line kinds
+// declare their style here at compile time.
 const SPAN_DASH_PX = 8;
 const SPAN_GAP_PX = 5;
-const SPAN_DASH: Record<Span["kind"], number[]> = {
+const SPAN_DASH: Record<LineSpan["kind"], number[]> = {
   vertical_span: [],
   horizontal_span: [],
   flag_to_ground_span: [SPAN_DASH_PX, SPAN_GAP_PX],
 };
+
+// The corner/endpoint points drawn as selection rings, in image pixels. A line
+// span has two (its endpoints); a box has four — both stored corners plus the two
+// implied by the axis-aligned rect — matching what hitTest treats as grabbable.
+function selectionHandles(s: Span): [number, number][] {
+  if (s.kind === "flag_box") {
+    return [
+      [s.u1, s.v1],
+      [s.u2, s.v1],
+      [s.u2, s.v2],
+      [s.u1, s.v2],
+    ];
+  }
+  return [
+    [s.u1, s.v1],
+    [s.u2, s.v2],
+  ];
+}
 
 // Draw a completed span as a tick-ended line in its transect color, labeled
 // e.g. "L3·V". Coordinates x1/y1/x2/y2 are already in canvas (CSS) pixels.
@@ -652,7 +839,7 @@ function drawSpan(
   y1: number,
   x2: number,
   y2: number,
-  s: Span
+  s: LineSpan
 ) {
   const color = TRANSECT_COLORS[s.transect];
   // Unit vector along the span and its perpendicular (for end ticks).
@@ -692,6 +879,36 @@ function drawSpan(
   );
 }
 
+// Draw a completed flag box as a rectangle in its transect color, labeled e.g.
+// "L3·B". x1/y1/x2/y2 are the canonical top-left / bottom-right corners already
+// converted to canvas (CSS) pixels — the caller may hand them over in any order
+// once view flips are involved, so the rect is built from the min/max.
+function drawBox(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  b: FlagBox
+) {
+  const left = Math.min(x1, x2);
+  const top = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1);
+  const h = Math.abs(y2 - y1);
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = TRANSECT_COLORS[b.transect];
+  ctx.setLineDash([]);
+  ctx.strokeRect(left, top, w, h);
+
+  drawLabel(
+    ctx,
+    `${b.transect}${fmtDistance(b.distance)}·${SPAN_LABEL_SUFFIX[b.kind]}`,
+    left + 6,
+    top - 4
+  );
+}
+
 // Draw the live ghost line from a pending span's first endpoint to the cursor.
 function drawGhostLine(
   ctx: CanvasRenderingContext2D,
@@ -717,6 +934,216 @@ function drawGhostLine(
   ctx.beginPath();
   ctx.arc(x1, y1, 4, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+}
+
+// Live rubber-band rectangle from a pending box's first corner to the cursor.
+// The box counterpart of drawGhostLine, same dash/alpha/anchor-dot treatment.
+function drawGhostRect(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  transect: Transect
+) {
+  ctx.save();
+  ctx.strokeStyle = TRANSECT_COLORS[transect];
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.7;
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(
+    Math.min(x1, x2),
+    Math.min(y1, y2),
+    Math.abs(x2 - x1),
+    Math.abs(y2 - y1)
+  );
+  ctx.setLineDash([]);
+  // small dot at the anchored first corner
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = TRANSECT_COLORS[transect];
+  ctx.beginPath();
+  ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Radius of a placed polygon vertex dot, in canvas (CSS) pixels. Small on
+// purpose: the whole point of the hand-drawn tool is tracing flags a few pixels
+// across, and a fat dot would hide the very edge being traced.
+const POLYGON_VERTEX_R = 3.5;
+
+// Live ghost for the in-progress hand-drawn polygon. `pts` are the placed vertices
+// and (cursorX, cursorY) the cursor, all already in canvas (CSS) pixels — the
+// caller supplies whichever surface's transform it is drawing on, so the same
+// helper serves the main overlay and the zoom panel.
+//
+// Placed edges draw SOLID; the segment to the cursor and the closing hint back to
+// vertex 0 draw dashed, so "already committed" reads differently from "what Enter
+// would add". With one vertex the dashed pair collapses onto itself and with two it
+// overlaps the placed edge — both harmless, so neither is special-cased.
+function drawGhostPolygon(
+  ctx: CanvasRenderingContext2D,
+  pts: [number, number][],
+  cursorX: number,
+  cursorY: number,
+  transect: Transect
+) {
+  if (pts.length === 0) return;
+  const color = TRANSECT_COLORS[transect];
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.7;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  const last = pts[pts.length - 1];
+  ctx.moveTo(last[0], last[1]);
+  ctx.lineTo(cursorX, cursorY);
+  ctx.lineTo(pts[0][0], pts[0][1]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+
+  ctx.fillStyle = color;
+  for (const [x, y] of pts) {
+    ctx.beginPath();
+    ctx.arc(x, y, POLYGON_VERTEX_R, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Ring vertex 0 in white: that is the vertex Enter closes onto, and on a
+  // 40-vertex outline it is otherwise impossible to tell which one it was.
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(pts[0][0], pts[0][1], POLYGON_VERTEX_R + 2.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// Mask overlay opacities. The fill has to be translucent enough that the labeler
+// can still judge the flag edge THROUGH it — that judgement is the whole point of
+// reviewing a mask — so the outline carries the shape and the fill only tints.
+const MASK_FILL_ALPHA = 0.3;
+const MASK_PREVIEW_FILL_ALPHA = 0.38;
+// The un-accepted candidate is drawn white rather than in the transect color, so
+// "proposed by the model" is never mistaken for "committed by me" at a glance.
+const MASK_PREVIEW_COLOR = "#ffffff";
+
+// Trace a mask's rings into the current path. `toX`/`toY` map image pixels to
+// canvas (CSS) pixels — the caller supplies whichever surface's transform it is
+// drawing on, so the same tracer serves the main canvas and the zoom panel (whose
+// magnifications are independent; see ZOOM_* vs VIEW_SCALE_*).
+function traceRings(
+  ctx: CanvasRenderingContext2D,
+  rings: MaskRing[],
+  toX: (u: number) => number,
+  toY: (v: number) => number
+) {
+  ctx.beginPath();
+  for (const ring of rings) {
+    if (ring.length === 0) continue;
+    ctx.moveTo(toX(ring[0][0]), toY(ring[0][1]));
+    for (let i = 1; i < ring.length; i++) {
+      ctx.lineTo(toX(ring[i][0]), toY(ring[i][1]));
+    }
+    ctx.closePath();
+  }
+}
+
+// Draw a committed mask: translucent transect-colored fill plus a solid outline,
+// labeled e.g. "L3·M". "evenodd" so a ring nested inside another reads as a hole
+// rather than painting over it.
+function drawMask(
+  ctx: CanvasRenderingContext2D,
+  m: FlagMask,
+  toX: (u: number) => number,
+  toY: (v: number) => number
+) {
+  const color = TRANSECT_COLORS[m.transect];
+  ctx.save();
+  traceRings(ctx, m.rings, toX, toY);
+  ctx.globalAlpha = MASK_FILL_ALPHA;
+  ctx.fillStyle = color;
+  ctx.fill("evenodd");
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+
+  const b = maskBounds(m.rings);
+  if (b) {
+    drawLabel(
+      ctx,
+      `${m.transect}${fmtDistance(m.distance)}·${MASK_LABEL_SUFFIX}`,
+      toX(b.u1) + 6,
+      toY(b.v1) - 4
+    );
+  }
+}
+
+// Draw the live, un-accepted candidate: white dashed outline over a translucent
+// white fill, so it reads as a proposal awaiting Enter.
+function drawMaskPreview(
+  ctx: CanvasRenderingContext2D,
+  rings: MaskRing[],
+  toX: (u: number) => number,
+  toY: (v: number) => number
+) {
+  ctx.save();
+  traceRings(ctx, rings, toX, toY);
+  ctx.globalAlpha = MASK_PREVIEW_FILL_ALPHA;
+  ctx.fillStyle = MASK_PREVIEW_COLOR;
+  ctx.fill("evenodd");
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = MASK_PREVIEW_COLOR;
+  ctx.setLineDash([5, 4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// Draw the refinement clicks of an active prompt: green + for positive, red − for
+// negative. These are transient prompt state, never annotations.
+function drawPromptClicks(
+  ctx: CanvasRenderingContext2D,
+  clicks: { u: number; v: number; label: 0 | 1 }[],
+  toX: (u: number) => number,
+  toY: (v: number) => number
+) {
+  ctx.save();
+  for (const c of clicks) {
+    const x = toX(c.u);
+    const y = toY(c.v);
+    const r = 6;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = c.label === 1 ? "#3ddc84" : "#ff4d4d";
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+    // Glyph: a full plus for positive, just the bar for negative.
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x - 3, y);
+    ctx.lineTo(x + 3, y);
+    if (c.label === 1) {
+      ctx.moveTo(x, y - 3);
+      ctx.lineTo(x, y + 3);
+    }
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -756,10 +1183,70 @@ function App() {
   const [activeType, setActiveType] = useState<ActiveAnnoType>("wire_ground");
   // Global pending-span state (sequential two-click placement across surfaces).
   const [pending, dispatchPending] = useReducer(pendingSpanReducer, PENDING_IDLE);
+  // In-progress hand-drawn polygon (P). Unbounded vertex clicks across both
+  // surfaces; commits as a flag_mask on Enter. Mutually exclusive with the SAM3
+  // session below — both own the canvas, so starting either ends the other.
+  const [polygon, dispatchPolygon] = useReducer(pendingPolygonReducer, POLYGON_IDLE);
 
   // Pending duplicate-collision decision. Non-null = the confirm modal is open
   // and blocks other interaction until the labeler resolves it.
   const [pendingCollision, setPendingCollision] = useState<PendingCollision>(null);
+
+  // ─── SAM3 segmentation session ───────────────────────────────────────────────
+  // An active session targets ONE selected flag_box and holds the refinement
+  // clicks made so far. Everything here is transient: only the accepted mask ever
+  // becomes an annotation.
+  const [prompt, dispatchPrompt] = useReducer(pendingPromptReducer, PROMPT_IDLE);
+  // The ranked candidates from the last /segment call and which one is showing.
+  // Up to 3 come back because granularity is genuinely ambiguous at distance —
+  // the labeler cycles, the app never silently picks.
+  const [maskCandidates, setMaskCandidates] = useState<Candidate[]>([]);
+  const [maskCandidateIdx, setMaskCandidateIdx] = useState<number>(0);
+  const [maskBusy, setMaskBusy] = useState<boolean>(false);
+  const [maskError, setMaskError] = useState<string | null>(null);
+  const [sam3Url, setSam3Url] = useState<string>(SAM3_DEFAULT_BASE_URL);
+  // Per-image encode cache: the image bytes we POSTed and the embed_id the server
+  // gave back. Keyed on the image PATH so switching images invalidates it — a
+  // stale embed_id would segment the wrong photo. The blob is retained because a
+  // 409 (server restart / cache eviction) has to re-POST the same bytes.
+  const sam3EmbedRef = useRef<{
+    path: string;
+    blob: Blob;
+    embedId: string;
+  } | null>(null);
+  // Guards against overlapping /segment calls: each request captures the token,
+  // and a response whose token is stale is dropped (same pattern as loadSeqRef).
+  const segmentSeqRef = useRef(0);
+
+  // The candidate currently on show, or null. Drives both canvases — so it is
+  // declared HERE, above the draw effects, because their dependency arrays are
+  // evaluated during render and a later `const` would be in its TDZ.
+  const activeCandidate: Candidate | null =
+    prompt.kind === "active" ? maskCandidates[maskCandidateIdx] ?? null : null;
+
+  // Tear down the whole session. `prompt.targetIdx` is an INDEX into `clicks`, and
+  // any mutation that removes or reorders an element invalidates it — so every
+  // such path calls this. (Pure appends can't shift a lower index, so those don't
+  // need it.) Same hazard, and same discipline, as `setPendingCollision(null)`.
+  const endMaskSession = useCallback(() => {
+    segmentSeqRef.current++;
+    dispatchPrompt({ type: "cancel" });
+    setMaskCandidates([]);
+    setMaskCandidateIdx(0);
+    setMaskBusy(false);
+    setMaskError(null);
+  }, []);
+
+  // Tear down BOTH canvas-owning sessions. Every mutation that can invalidate an
+  // index or swap the image goes through THIS, not endMaskSession: on top of the
+  // stale-targetIdx hazard above, an in-progress polygon still holding vertices
+  // would carry them onto the next photo and write a mask onto the wrong image.
+  // (endMaskSession stays separate for the two callers that must NOT drop a
+  // polygon: mask-accept and selecting the polygon tool.)
+  const endSessions = useCallback(() => {
+    endMaskSession();
+    dispatchPolygon({ type: "cancel" });
+  }, [endMaskSession]);
 
   // Cancel = discard the candidate entirely: no append, no dirty change.
   // Declared here (before the keyboard effect that references it)
@@ -784,12 +1271,29 @@ function App() {
   // and there is no shared dataset.
   const [progressById, setProgressById] = useState<Record<string, ImageProgress>>({});
 
-  // Web-only (cloud) state. `isAdmin` now gates ONLY the privileged force-unlock
-  // affordance (clearing another labeler's lock). Dataset management (upload,
-  // add/rename/delete) is open to every authenticated team member via
+  // Web-only (cloud) state. `isAdmin` gates the privileged force-unlock affordance
+  // (clearing another labeler's lock) and the admin panel. Dataset management
+  // (upload, add/rename/delete) is open to every authenticated team member via
   // `canManageDataset` below. Inert on desktop (the effect that sets isAdmin
   // early-returns on Tauri).
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+
+  // Whether the box / mask / polygon tools are available (see ADMIN_ONLY_TOOLS).
+  // Deliberately NOT the admin role — there is more than one admin, and this is a
+  // per-user server-side flag (`has_mask_tools()`, membership table RLS-locked with
+  // no policies, so it isn't even readable through the API). Arrives async on the
+  // web — false until the RPC answers, so everything reading it must be
+  // render/handler state, not a mount-time snapshot. Permanently false on desktop,
+  // where there is no auth at all: this labeling happens on the web build.
+  const [maskTools, setMaskTools] = useState<boolean>(false);
+  const adminTools = maskTools;
+
+  // The rail's tool buttons, minus the restricted ones. Derived at render, so the
+  // grid grows the moment `isAdmin` resolves true — and the section's key hint is
+  // built from the same list, never listing a key that isn't shown.
+  const visibleTools = adminTools
+    ? ANNOTATION_TOOLS
+    : ANNOTATION_TOOLS.filter((t) => !ADMIN_ONLY_TOOLS.has(t.kind));
 
   // Signed-in account (web only; null on desktop). Surfaced into the merged
   // titlebar's far-right cluster as the email + Sign out.
@@ -913,6 +1417,8 @@ function App() {
           onboardedRef.current = false;
           setFirstRun(true);
         }
+        const sam3 = await s.get<string>(SETTINGS_KEY_SAM3_URL);
+        if (typeof sam3 === "string" && sam3.trim() !== "") setSam3Url(sam3);
       } catch (e) {
         console.error("Failed to load settings", e);
       }
@@ -987,6 +1493,7 @@ function App() {
   useEffect(() => {
     if (isTauri()) return;
     fetchIsAdmin().then(setIsAdmin).catch(() => {});
+    fetchHasMaskTools().then(setMaskTools).catch(() => {});
     refreshGallery();
   }, [refreshGallery]);
 
@@ -1022,6 +1529,13 @@ function App() {
             // annotation into the new image. Discarding the candidate is the safe
             // resolution.
             setPendingCollision(null);
+            // Same reasoning for the SAM3 session: `prompt.targetIdx` indexes the
+            // OUTGOING image's clicks array, and the cached embed_id belongs to
+            // the outgoing image's pixels. Accepting either after a switch would
+            // write a mask from one photo onto another. Drop both — along with any
+            // half-drawn polygon, whose vertices are the outgoing image's pixels.
+            endSessions();
+            sam3EmbedRef.current = null;
             setCursor(null);
             setCurrentDistance(1);
             setDirty(false);
@@ -1059,7 +1573,7 @@ function App() {
       }
       console.error("loadImage failed", e);
     });
-  }, []);
+  }, [endSessions]);
 
   const handleOpen = useCallback(async () => {
     if (!isTauri()) return; // native file dialog is desktop-only (web gallery: #14)
@@ -1810,15 +2324,32 @@ function App() {
     return () => clearTimeout(id);
   }, [dirty, clicks, image, clicksDir, handleSave]);
 
+  // Whether Undo would actually do something — the titlebar button reads this so it
+  // doesn't look live while handleUndo refuses (see the guard below).
+  const canUndo =
+    canEdit &&
+    clicks.length > 0 &&
+    (adminTools || !ADMIN_ONLY_TOOLS.has(clicks[clicks.length - 1].kind));
+
   const handleUndo = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (clicks.length === 0) return;
+    // Undo has no floor at the loaded state — it just pops the last annotation — so
+    // on an admin-labeled image it is the one path that could delete a box or mask
+    // without selecting it (which the restricted tools already prevent). Refuse
+    // instead: undo may only remove what this user could have placed. Redo needs no
+    // guard, since it can only re-add what undo popped.
+    const last = clicks[clicks.length - 1];
+    if (!adminTools && ADMIN_ONLY_TOOLS.has(last.kind)) return;
     historyAction.current = true; // keep the redo stack across this change
     setRedoStack((r) => [...r, clicks[clicks.length - 1]]);
     setClicks((prev) => prev.slice(0, -1));
     setSelectedIdx(null);
+    // Undo can pop the very box a SAM3 session is targeting (or anything after
+    // it), so the session's index is no longer trustworthy — drop it.
+    endSessions();
     setDirty(true);
-  }, [canEdit, clicks]);
+  }, [canEdit, clicks, endSessions, adminTools]);
 
   const handleRedo = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
@@ -1828,8 +2359,9 @@ function App() {
     setRedoStack((r) => r.slice(0, -1));
     setClicks((prev) => [...prev, item]);
     setSelectedIdx(null);
+    endSessions();
     setDirty(true);
-  }, [canEdit, redoStack]);
+  }, [canEdit, redoStack, endSessions]);
 
   // Invalidate the redo stack on any `clicks` change that ISN'T an undo/redo
   // (a new placement, delete, clear, retag, or loading another image). This
@@ -1855,17 +2387,21 @@ function App() {
     if (ok) {
       setClicks([]);
       setSelectedIdx(null);
+      endSessions();
       setDirty(true);
     }
-  }, [clicks.length, canEdit]);
+  }, [clicks.length, canEdit, endSessions]);
 
   const deleteSelected = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (selectedIdx === null) return;
     setClicks((prev) => prev.filter((_, i) => i !== selectedIdx));
     setSelectedIdx(null);
+    // A filter shifts every index above the removed one, so any live SAM3
+    // session's targetIdx is now wrong (possibly pointing at a different flag).
+    endSessions();
     setDirty(true);
-  }, [selectedIdx, canEdit]);
+  }, [selectedIdx, canEdit, endSessions]);
 
   const retagSelected = useCallback(
     (t: Transect) => {
@@ -1988,6 +2524,351 @@ function App() {
     };
   }, []);
 
+  // Single commit path for a fully-formed annotation. Checks for a duplicate
+  // {transect, distance, kind}: if none, append + dirty + (wire-ground) auto-
+  // advance; if one exists, divert to the blocking confirm modal (no append, no
+  // dirty) and let the labeler choose replace / keep both / cancel. Reads `clicks`
+  // fresh (it's in this callback's deps) so the collision check never runs against
+  // a stale snapshot.
+  // Placing the first annotation is the aha moment: persist that this user is
+  // onboarded and drop the in-flow hint. Guarded via the ref so the store write
+  // happens exactly once, even though this fires on every successful placement.
+  const markOnboarded = useCallback(() => {
+    if (onboardedRef.current) return;
+    onboardedRef.current = true;
+    setFirstRun(false);
+    (async () => {
+      try {
+        await storeRef.current?.set(SETTINGS_KEY_ONBOARDED, true);
+        await storeRef.current?.save();
+      } catch (e) {
+        console.error("Failed to persist onboarding flag", e);
+      }
+    })();
+  }, []);
+
+  const commitAnnotation = useCallback(
+    (candidate: Annotation) => {
+      const existingIndex = findCollision(clicks, {
+        transect: candidate.transect,
+        distance: candidate.distance,
+        kind: candidate.kind,
+      });
+      if (existingIndex === null) {
+        setClicks((prev) => [...prev, candidate]);
+        setDirty(true);
+        markOnboarded();
+        return;
+      }
+      setPendingCollision({ candidate, existingIndex });
+    },
+    [clicks, markOnboarded]
+  );
+
+  // ─── SAM3 segmentation ───────────────────────────────────────────────────────
+
+  // One client per configured URL. Cheap to rebuild; memoized only so effects and
+  // callbacks that depend on it don't churn on every render.
+  const sam3 = useMemo<Sam3Client>(
+    () => createSam3Client({ baseUrl: sam3Url }),
+    [sam3Url]
+  );
+
+  // Change the service URL and persist it. Any cached embed_id belongs to the OLD
+  // service, so it is dropped — a different host has never seen that id.
+  const updateSam3Url = useCallback((next: string) => {
+    setSam3Url(next);
+    sam3EmbedRef.current = null;
+    (async () => {
+      try {
+        await storeRef.current?.set(SETTINGS_KEY_SAM3_URL, next);
+        await storeRef.current?.save();
+      } catch (e) {
+        console.error("Failed to persist SAM3 URL", e);
+      }
+    })();
+  }, []);
+
+  // Acquire the current image's bytes as a Blob for /encode.
+  //
+  // THE ONE RUNTIME-RISKY LINE in this feature, and deliberately the only place
+  // it appears. `image.url` is a signed https URL on web (plainly fetchable) but
+  // an `asset://` URL from Tauri's convertFileSrc on desktop; whether the webview
+  // will `fetch` that scheme is runtime behavior neither `tsc` nor vitest can
+  // check. If desktop encode fails here, the fix is local to this function — the
+  // known good fallback is a Rust command returning the file bytes (rather than an
+  // offscreen-canvas re-encode, which risks canvas tainting).
+  const fetchImageBlob = useCallback(async (url: string): Promise<Blob> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`image fetch failed (${res.status})`);
+    return res.blob();
+  }, []);
+
+  // Return a valid {blob, embedId} for the current image, encoding if we don't
+  // already hold one for THIS path. The cache is keyed on path so an image switch
+  // (which also nulls it in loadImage) can never reuse another photo's embedding.
+  const ensureEncoded = useCallback(
+    async (img: LoadedImage): Promise<{ blob: Blob; embedId: string }> => {
+      const cached = sam3EmbedRef.current;
+      if (cached && cached.path === img.path) {
+        return { blob: cached.blob, embedId: cached.embedId };
+      }
+      const blob = await fetchImageBlob(img.url);
+      const { embed_id } = await sam3.encode(blob);
+      sam3EmbedRef.current = { path: img.path, blob, embedId: embed_id };
+      return { blob, embedId: embed_id };
+    },
+    [sam3, fetchImageBlob]
+  );
+
+  // Run /segment for `box` with `points`, and show the ranked candidates.
+  // The box AND the full click list go on every call — the service is stateless
+  // per request, so this is never a delta against the previous call.
+  const runSegment = useCallback(
+    async (box: FlagBox, points: ReturnType<typeof promptPoints>) => {
+      if (!image) return;
+      const seq = ++segmentSeqRef.current;
+      setMaskBusy(true);
+      setMaskError(null);
+      try {
+        const { blob, embedId } = await ensureEncoded(image);
+        const res = await segmentWithReencode(
+          sam3,
+          embedId,
+          blob,
+          [box.u1, box.v1, box.u2, box.v2],
+          points
+        );
+        // segmentWithReencode may have transparently re-encoded after a 409; the
+        // id it returns is the one the result was actually produced with, so write
+        // it back or the next call repeats the recovery.
+        if (res.embedId !== embedId) {
+          sam3EmbedRef.current = { path: image.path, blob, embedId: res.embedId };
+        }
+        if (seq !== segmentSeqRef.current) return; // superseded (or session ended)
+        setMaskCandidates(res.candidates);
+        setMaskCandidateIdx(0);
+        if (res.candidates.length === 0) {
+          setMaskError("No mask returned for this box.");
+        }
+      } catch (e) {
+        if (seq !== segmentSeqRef.current) return;
+        setMaskCandidates([]);
+        // Unreachable vs. failed are different problems with different fixes, so
+        // they get different messages — see the client's error classes.
+        setMaskError(
+          e instanceof Sam3UnreachableError
+            ? `Can't reach the SAM3 service at ${sam3.baseUrl}. Is the SSH tunnel up?`
+            : `Segmentation failed: ${e instanceof Error ? e.message : String(e)}`
+        );
+        console.error("SAM3 segment failed", e);
+      } finally {
+        if (seq === segmentSeqRef.current) setMaskBusy(false);
+      }
+    },
+    [image, sam3, ensureEncoded]
+  );
+
+  // Start (or restart) a segmentation session on the selected flag_box: box-only
+  // prompt, no refinement clicks yet. Bound to M.
+  const startSegmentSelected = useCallback(() => {
+    if (!adminTools) return; // mask tooling is admin-only on the web build
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
+    if (!image) return;
+    // A SAM3 session and a hand-drawn polygon both own the canvas, so only one may
+    // be live. This direction refuses rather than cancels: a traced outline can be
+    // thirty deliberate clicks, so M says what to do instead of silently binning it.
+    // (The other direction — selecting the polygon tool — DOES discard a live
+    // candidate, because re-requesting one is a single keypress.)
+    if (polygon.kind === "active") {
+      setMaskError(
+        "Finish the hand-drawn polygon first: ↵ to close it, or Esc to discard it."
+      );
+      return;
+    }
+    // A mask is always derived from a box, so the box has to be picked explicitly —
+    // guessing "the most recent box" would silently mask the wrong flag on an image
+    // with fifteen of them.
+    const targetIdx = selectedIdx;
+    const target = targetIdx === null ? undefined : clicks[targetIdx];
+    if (targetIdx === null || !target || target.kind !== "flag_box") {
+      setMaskError(
+        "Pick the box first: press T, click one of its corners to select it, then M."
+      );
+      return;
+    }
+    segmentSeqRef.current++;
+    dispatchPrompt({ type: "start", targetIdx });
+    setMaskCandidates([]);
+    setMaskCandidateIdx(0);
+    setMaskError(null);
+    void runSegment(target, []);
+  }, [adminTools, canEdit, image, selectedIdx, clicks, runSegment, polygon.kind]);
+
+  // Add one refinement click and re-segment with the full list. Points are
+  // transient prompt state — they are never annotations and never persisted.
+  const addPromptClick = useCallback(
+    (u: number, v: number, label: 0 | 1) => {
+      if (prompt.kind !== "active") return;
+      const target = clicks[prompt.targetIdx];
+      if (!target || target.kind !== "flag_box") {
+        endMaskSession();
+        return;
+      }
+      const next = pendingPromptReducer(prompt, {
+        type: "addClick",
+        point: { u, v },
+        label,
+      });
+      dispatchPrompt({ type: "addClick", point: { u, v }, label });
+      void runSegment(target, promptPoints(next));
+    },
+    [prompt, clicks, runSegment, endMaskSession]
+  );
+
+  // Drop the last refinement click and re-segment with what's left. Re-running is
+  // the point: leaving the previous candidate on screen after removing the click
+  // that produced it would show a mask the current prompt no longer implies.
+  const undoPromptClick = useCallback(() => {
+    if (prompt.kind !== "active" || prompt.clicks.length === 0) return;
+    const target = clicks[prompt.targetIdx];
+    if (!target || target.kind !== "flag_box") {
+      endMaskSession();
+      return;
+    }
+    const next = pendingPromptReducer(prompt, { type: "undoClick" });
+    dispatchPrompt({ type: "undoClick" });
+    void runSegment(target, promptPoints(next));
+  }, [prompt, clicks, runSegment, endMaskSession]);
+
+  const cycleMaskCandidate = useCallback(() => {
+    if (maskCandidates.length === 0) return;
+    setMaskCandidateIdx((i) => (i + 1) % maskCandidates.length);
+  }, [maskCandidates.length]);
+
+  // Commit the showing candidate as a flag_mask on the target box's
+  // {transect, distance}, then end the session. Rounds the rings once, here —
+  // the schema layer stays a passthrough (see roundRings).
+  const acceptMaskCandidate = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
+    if (prompt.kind !== "active") return;
+    // Fail safe if a mutation slipped past endMaskSession: the index must still
+    // point at a flag_box or we do not know which flag this mask belongs to.
+    const target = clicks[prompt.targetIdx];
+    if (!target || target.kind !== "flag_box") {
+      endMaskSession();
+      return;
+    }
+    const candidate = maskCandidates[maskCandidateIdx];
+    if (!candidate || candidate.rings.length === 0) return;
+    const mask: FlagMask = {
+      kind: "flag_mask",
+      rings: roundRings(candidate.rings),
+      score: candidate.score,
+      transect: target.transect,
+      distance: target.distance,
+    };
+    const boxIdx = prompt.targetIdx;
+    endMaskSession();
+    // Inlined commit (not commitAnnotation) because accepting a mask also
+    // auto-deletes its prompt box, and both must land in ONE setClicks — a
+    // separate delete would shift indices under the collision modal's feet.
+    const existingIndex = findCollision(clicks, {
+      transect: mask.transect,
+      distance: mask.distance,
+      kind: mask.kind,
+    });
+    if (existingIndex === null) {
+      setClicks((prev) => [...prev.filter((_, i) => i !== boxIdx), mask]);
+      setDirty(true);
+      markOnboarded();
+      return;
+    }
+    // Duplicate mask -> divert to the modal; the box is deleted only if the
+    // user actually commits (Replace / Keep both), never on Cancel.
+    setPendingCollision({ candidate: mask, existingIndex, alsoRemoveIdx: boxIdx });
+  }, [
+    canEdit,
+    prompt,
+    clicks,
+    maskCandidates,
+    maskCandidateIdx,
+    markOnboarded,
+    endMaskSession,
+  ]);
+
+  // ─── Hand-drawn polygon (P) ──────────────────────────────────────────────────
+
+  // Switch tools. Goes through here rather than a bare setActiveType so the
+  // session/tool coupling lives in one place: a polygon belongs to the polygon
+  // tool, and leaving that tool abandons the outline instead of stranding an
+  // invisible one still armed for Enter. Picking the polygon tool discards any live
+  // SAM3 candidate for the mirror-image reason — see startSegmentSelected, which
+  // refuses in the other direction instead of discarding traced work.
+  // This is also the ONLY writer of `activeType`, which makes it the single gate for
+  // the restricted tools: the rail buttons and the T / Y / P keys both come through
+  // here, and hitTest is active-type-gated, so a tool that can't be selected can't
+  // place, select or delete its kind either.
+  const selectTool = useCallback(
+    (kind: ActiveAnnoType) => {
+      if (!adminTools && ADMIN_ONLY_TOOLS.has(kind)) return;
+      if (kind === activeType) return; // re-pressing the active tool changes nothing
+      if (kind === "polygon") endMaskSession();
+      else dispatchPolygon({ type: "cancel" });
+      setActiveType(kind);
+    },
+    [activeType, endMaskSession, adminTools]
+  );
+
+  // Belt-and-braces: `activeType` is never restored from the store (only clicks_dir /
+  // onboarded / sam3_url are persisted), so this only guards the async direction — a
+  // restricted tool armed at the moment `isAdmin` resolves to false. Fall back to the
+  // default tool and tear down either canvas-owning session rather than leaving a
+  // hidden tool live.
+  useEffect(() => {
+    if (adminTools || !ADMIN_ONLY_TOOLS.has(activeType)) return;
+    endSessions();
+    selectTool("wire_ground");
+  }, [adminTools, activeType, endSessions, selectTool]);
+
+  // Add one vertex at image coords (u,v), starting a session on the first click —
+  // which is where the transect/distance are captured, exactly as pending-span
+  // does. The two dispatches are applied in order by the reducer, so a first click
+  // never leaves a vertex-less active polygon behind.
+  const addPolygonVertex = useCallback(
+    (u: number, v: number) => {
+      if (!canEdit) return; // web: blocked while another labeler holds the lock
+      if (polygon.kind !== "active") {
+        dispatchPolygon({
+          type: "start",
+          transect: currentTransect,
+          distance: currentDistance,
+        });
+      }
+      dispatchPolygon({ type: "addVertex", point: { u, v } });
+    },
+    [canEdit, polygon.kind, currentTransect, currentDistance]
+  );
+
+  // Close the outline and commit it as a flag_mask on the transect/distance the
+  // FIRST click captured. Unlike mask-accept there is no prompt box to delete, so
+  // this takes the standard commitAnnotation path (dirty flag + collision divert).
+  // Reset to idle FIRST — clearing the ghost — so a cancelled collision still ends
+  // the session instead of leaving the outline re-committable.
+  const closePolygon = useCallback(() => {
+    if (!canEdit) return; // web: blocked while another labeler holds the lock
+    if (!canClose(polygon) || polygon.kind !== "active") return;
+    const candidate: FlagMask = {
+      kind: "flag_mask",
+      rings: roundRings(polygonRings(polygon)),
+      score: HAND_DRAWN_MASK_SCORE,
+      transect: polygon.transect,
+      distance: polygon.distance,
+    };
+    dispatchPolygon({ type: "cancel" });
+    commitAnnotation(candidate);
+  }, [canEdit, polygon, commitAnnotation]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const inInput = e.target instanceof HTMLInputElement;
@@ -2020,8 +2901,25 @@ function App() {
           setShowHelp(false);
           return;
         }
-        // An in-progress span placement is the most "active" thing — cancel it
-        // before falling through to deselect.
+        // A hand-drawn polygon owns the canvas exactly like a SAM3 session does
+        // (clicks become vertices), so it cancels at the same priority — discarding
+        // the whole outline. The two are mutually exclusive, so their order here is
+        // immaterial.
+        if (polygon.kind === "active") {
+          e.preventDefault();
+          dispatchPolygon({ type: "cancel" });
+          return;
+        }
+        // A live SAM3 session owns the canvas (clicks become prompts), so it is
+        // the most "active" thing of all — cancel it first, discarding the
+        // candidate without committing anything.
+        if (prompt.kind === "active") {
+          e.preventDefault();
+          endMaskSession();
+          return;
+        }
+        // An in-progress span placement is the next most "active" thing — cancel
+        // it before falling through to deselect.
         if (pending.kind !== "idle") {
           e.preventDefault();
           dispatchPending({ type: "cancel" });
@@ -2047,11 +2945,63 @@ function App() {
         return;
       }
 
+      // SAM3 segmentation. All three are plain keys (`!cmd`), matching the
+      // existing tool keys, so ⌘M (minimize) and ⌘C (copy) are untouched. They sit
+      // below the pendingCollision early-return above, so the collision modal
+      // stays fully modal. Both drive the mask tooling, so both are gated with it —
+      // without `adminTools` they fall through and do nothing at all, rather than
+      // being swallowed by a preventDefault for a feature the user doesn't have.
+      if (adminTools && e.key.toLowerCase() === "m" && !cmd) {
+        e.preventDefault();
+        startSegmentSelected();
+        return;
+      }
+      if (adminTools && e.key.toLowerCase() === "c" && !cmd) {
+        e.preventDefault();
+        // Explicitly inert while drawing: a polygon and a SAM3 session are mutually
+        // exclusive, so there is no candidate to cycle and C must not read as
+        // "something happened" mid-outline.
+        if (polygon.kind === "active") return;
+        cycleMaskCandidate();
+        return;
+      }
+      // Enter closes a polygon OR accepts a mask candidate — never both, since the
+      // two sessions are mutually exclusive. preventDefault fires even when the
+      // outline is too short to close, so Enter is consistently swallowed here.
+      if (e.key === "Enter" && polygon.kind === "active") {
+        e.preventDefault();
+        closePolygon();
+        return;
+      }
+      if (e.key === "Enter" && prompt.kind === "active") {
+        e.preventDefault();
+        acceptMaskCandidate();
+        return;
+      }
+
+      // While drawing, Del is "undo my last vertex" — and unlike the block below it
+      // must fire with nothing selected, which is the normal state mid-outline.
+      if (
+        polygon.kind === "active" &&
+        (e.key === "Delete" || e.key === "Backspace")
+      ) {
+        e.preventDefault();
+        dispatchPolygon({ type: "undoVertex" });
+        return;
+      }
+
       if (
         selectedIdx !== null &&
         (e.key === "Delete" || e.key === "Backspace")
       ) {
         e.preventDefault();
+        // While a session is live, Delete is the "undo my last refinement click"
+        // affordance, not "delete the annotation" — the box being segmented must
+        // survive its own session.
+        if (prompt.kind === "active") {
+          undoPromptClick();
+          return;
+        }
         deleteSelected();
         return;
       }
@@ -2090,16 +3040,25 @@ function App() {
         else setCurrentDistance((d) => Math.max(0, +(d - step).toFixed(1)));
       } else if (e.key.toLowerCase() === "q" && !cmd) {
         e.preventDefault();
-        setActiveType("wire_ground");
+        selectTool("wire_ground");
       } else if (e.key.toLowerCase() === "w" && !cmd) {
         e.preventDefault();
-        setActiveType("vertical_span");
+        selectTool("vertical_span");
       } else if (e.key.toLowerCase() === "e" && !cmd) {
         e.preventDefault();
-        setActiveType("horizontal_span");
+        selectTool("horizontal_span");
       } else if (e.key.toLowerCase() === "r" && !cmd) {
         e.preventDefault();
-        setActiveType("flag_to_ground_span");
+        selectTool("flag_to_ground_span");
+      } else if (e.key.toLowerCase() === "t" && !cmd) {
+        e.preventDefault();
+        selectTool("flag_box");
+      } else if (e.key.toLowerCase() === "y" && !cmd) {
+        e.preventDefault();
+        selectTool("flag_mask");
+      } else if (e.key.toLowerCase() === "p" && !cmd) {
+        e.preventDefault();
+        selectTool("polygon");
       } else if (e.key === "[") {
         e.preventDefault();
         setZoomRadius((r) => Math.max(ZOOM_MIN, r - 5));
@@ -2134,6 +3093,16 @@ function App() {
     resetView,
     pendingCollision,
     resolveCollisionCancel,
+    prompt,
+    endMaskSession,
+    startSegmentSelected,
+    cycleMaskCandidate,
+    acceptMaskCandidate,
+    undoPromptClick,
+    polygon,
+    closePolygon,
+    selectTool,
+    adminTools,
   ]);
 
   // Main canvas
@@ -2173,19 +3142,34 @@ function App() {
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
 
+      // Image-pixel → canvas-pixel mappers for this surface, shared with the mask
+      // tracers (the zoom panel has its own pair; the two magnifications are
+      // independent — see ZOOM_* vs VIEW_SCALE_*).
+      const toX = (u: number) => offsetX + u * effScale;
+      const toY = (v: number) => offsetY + v * effScale;
+
       for (const c of clicks) {
         if (c.kind === "wire_ground") {
-          drawMarker(ctx, offsetX + c.u * effScale, offsetY + c.v * effScale, c, viewScale);
+          drawMarker(ctx, toX(c.u), toY(c.v), c, viewScale);
+        } else if (c.kind === "flag_mask") {
+          // Masks carry `rings`, not endpoints, so they can't ride the
+          // two-endpoint branch below — the `Span` alias excludes them by design.
+          drawMask(ctx, c, toX, toY);
         } else {
-          drawSpan(
-            ctx,
-            offsetX + c.u1 * effScale,
-            offsetY + c.v1 * effScale,
-            offsetX + c.u2 * effScale,
-            offsetY + c.v2 * effScale,
-            c
-          );
+          const x1 = toX(c.u1);
+          const y1 = toY(c.v1);
+          const x2 = toX(c.u2);
+          const y2 = toY(c.v2);
+          if (c.kind === "flag_box") drawBox(ctx, x1, y1, x2, y2, c);
+          else drawSpan(ctx, x1, y1, x2, y2, c);
         }
+      }
+
+      // Live, un-accepted candidate + its refinement clicks, drawn on top of the
+      // committed annotations so the proposal is never hidden behind them.
+      if (activeCandidate) drawMaskPreview(ctx, activeCandidate.rings, toX, toY);
+      if (prompt.kind === "active") {
+        drawPromptClicks(ctx, prompt.clicks, toX, toY);
       }
 
       const sc = selectedIdx !== null ? clicks[selectedIdx] : undefined;
@@ -2194,14 +3178,33 @@ function App() {
         ctx.lineWidth = 2;
         if (sc.kind === "wire_ground") {
           ctx.beginPath();
-          ctx.arc(offsetX + sc.u * effScale, offsetY + sc.v * effScale, 10 + 2 * viewScale, 0, Math.PI * 2);
+          ctx.arc(toX(sc.u), toY(sc.v), 10 + 2 * viewScale, 0, Math.PI * 2);
           ctx.stroke();
+        } else if (sc.kind === "flag_mask") {
+          // A mask has no corner handles, so selection is an inflated outline of
+          // its bounding box — visible even when the mask is a few pixels across.
+          const b = maskBounds(sc.rings);
+          if (b) {
+            ctx.strokeRect(
+              toX(b.u1) - 4,
+              toY(b.v1) - 4,
+              toX(b.u2) - toX(b.u1) + 8,
+              toY(b.v2) - toY(b.v1) + 8
+            );
+          }
         } else {
+          // Outline a selected box as well as ringing its corners: zoomed in far
+          // enough, every corner sits off-canvas and the rings alone would leave
+          // no visible selection (same reason as in the zoom panel below).
+          if (sc.kind === "flag_box") {
+            const bx1 = offsetX + sc.u1 * effScale;
+            const by1 = offsetY + sc.v1 * effScale;
+            const bx2 = offsetX + sc.u2 * effScale;
+            const by2 = offsetY + sc.v2 * effScale;
+            ctx.strokeRect(bx1 - 3, by1 - 3, bx2 - bx1 + 6, by2 - by1 + 6);
+          }
           const ring = 8 + 2 * viewScale;
-          for (const [pu, pv] of [
-            [sc.u1, sc.v1],
-            [sc.u2, sc.v2],
-          ]) {
+          for (const [pu, pv] of selectionHandles(sc)) {
             ctx.beginPath();
             ctx.arc(offsetX + pu * effScale, offsetY + pv * effScale, ring, 0, Math.PI * 2);
             ctx.stroke();
@@ -2217,7 +3220,18 @@ function App() {
     // The live ghost line lives on a separate overlay canvas (effect below), so
     // this heavy draw is deliberately NOT keyed on the cursor/pending — it only
     // re-runs when the image, committed annotations, selection, or view changes.
-  }, [image, clicks, selectedIdx, viewScale, viewPanX, viewPanY]);
+    // The mask preview IS keyed here (not on the overlay): it changes only per
+    // /segment round-trip or per candidate cycle, not per mousemove.
+  }, [
+    image,
+    clicks,
+    selectedIdx,
+    viewScale,
+    viewPanX,
+    viewPanY,
+    activeCandidate,
+    prompt,
+  ]);
 
   // Ghost-line overlay. Transparent canvas stacked exactly over the main one,
   // redrawn on every mousemove while a span awaits its second click. Uses the
@@ -2250,7 +3264,12 @@ function App() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, cw, ch);
 
-      if (pending.kind !== "awaitingSecond" || !cursor) return;
+      // No cursor = nothing to rubber-band toward. Not a lost polygon: the only
+      // place that nulls the cursor is loadImage, which cancels the polygon in the
+      // same breath (endSessions), so "polygon active with no cursor" is unreachable.
+      if (!cursor) return;
+      const polygonActive = polygon.kind === "active";
+      if (pending.kind !== "awaitingSecond" && !polygonActive) return;
       const { effScale, offsetX, offsetY } = computeViewParams(
         image!.width,
         image!.height,
@@ -2260,21 +3279,35 @@ function App() {
         cw,
         ch
       );
-      drawGhostLine(
-        ctx,
-        offsetX + pending.first.u * effScale,
-        offsetY + pending.first.v * effScale,
-        offsetX + cursor.u * effScale,
-        offsetY + cursor.v * effScale,
-        pending.transect
-      );
+      const toX = (u: number) => offsetX + u * effScale;
+      const toY = (v: number) => offsetY + v * effScale;
+      if (polygon.kind === "active") {
+        drawGhostPolygon(
+          ctx,
+          polygon.vertices.map((p) => [toX(p.u), toY(p.v)] as [number, number]),
+          toX(cursor.u),
+          toY(cursor.v),
+          polygon.transect
+        );
+      }
+      if (pending.kind === "awaitingSecond") {
+        const ghost = pending.type === "box" ? drawGhostRect : drawGhostLine;
+        ghost(
+          ctx,
+          toX(pending.first.u),
+          toY(pending.first.v),
+          toX(cursor.u),
+          toY(cursor.v),
+          pending.transect
+        );
+      }
     }
 
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(container);
     return () => ro.disconnect();
-  }, [image, pending, cursor, viewScale, viewPanX, viewPanY]);
+  }, [image, pending, polygon, cursor, viewScale, viewPanX, viewPanY]);
 
   // Zoom panel
   useEffect(() => {
@@ -2337,6 +3370,18 @@ function App() {
 
     const inWindow = (u: number, v: number) =>
       u >= sx && u <= sx + sw && v >= sy && v <= sy + sh;
+    // AABB overlap between an annotation's bounding box and the panel window.
+    // Used instead of a per-endpoint test wherever a shape can straddle or fully
+    // enclose the window (see the v0.2.0 long-span fix). Typed on the bare
+    // {u1,v1,u2,v2} shape rather than `Span` so a mask's `maskBounds` result feeds
+    // the same test — a mask is at least as prone to enclosing the window as a box.
+    const bboxInWindow = (a: SpanEndpoints) =>
+      !(
+        Math.max(a.u1, a.u2) < sx ||
+        Math.min(a.u1, a.u2) > sx + sw ||
+        Math.max(a.v1, a.v2) < sy ||
+        Math.min(a.v1, a.v2) > sy + sh
+      );
     const toX = (u: number) => (u - sx) * zoomScale;
     const toY = (v: number) => (v - sy) * zoomScale;
 
@@ -2344,18 +3389,46 @@ function App() {
       if (c.kind === "wire_ground") {
         if (!inWindow(c.u, c.v)) continue;
         drawMarker(ctx, toX(c.u), toY(c.v), c, zoomScale);
+      } else if (c.kind === "flag_mask") {
+        // Same AABB rule as spans and boxes: a mask can straddle or fully enclose
+        // the window with no vertex inside it, so gate on its bounding box and let
+        // the canvas clip the rest.
+        const b = maskBounds(c.rings);
+        if (!b || !bboxInWindow(b)) continue;
+        drawMask(ctx, c, toX, toY);
       } else {
-        // Draw the span if its bounding box intersects the panel window — not
-        // just if an endpoint is inside it. A long span (e.g. flag-to-ground)
-        // can pass straight through the window with BOTH endpoints outside;
-        // the canvas clips the off-panel portion of the line.
-        const minU = Math.min(c.u1, c.u2);
-        const maxU = Math.max(c.u1, c.u2);
-        const minV = Math.min(c.v1, c.v2);
-        const maxV = Math.max(c.v1, c.v2);
-        if (maxU < sx || minU > sx + sw || maxV < sy || minV > sy + sh) continue;
-        drawSpan(ctx, toX(c.u1), toY(c.v1), toX(c.u2), toY(c.v2), c);
+        // Draw the span/box if its bounding box intersects the panel window — not
+        // just if an endpoint is inside it. A long span (e.g. flag-to-ground) can
+        // pass straight through the window with BOTH endpoints outside, and a box
+        // drawn partly outside must still render its visible portion; the canvas
+        // clips whatever falls off-panel. For a box the min/max of its two stored
+        // corners IS its bounding box, so the same AABB test covers both.
+        if (!bboxInWindow(c)) continue;
+        const x1 = toX(c.u1);
+        const y1 = toY(c.v1);
+        const x2 = toX(c.u2);
+        const y2 = toY(c.v2);
+        if (c.kind === "flag_box") drawBox(ctx, x1, y1, x2, y2, c);
+        else drawSpan(ctx, x1, y1, x2, y2, c);
       }
+    }
+
+    // Live candidate + refinement clicks in the magnified panel — this is the
+    // surface a distant flag is actually judged on, so the preview has to appear
+    // here too. AABB-gated for the same reason as the committed masks above.
+    if (activeCandidate) {
+      const b = maskBounds(activeCandidate.rings);
+      if (b && bboxInWindow(b)) {
+        drawMaskPreview(ctx, activeCandidate.rings, toX, toY);
+      }
+    }
+    if (prompt.kind === "active") {
+      drawPromptClicks(
+        ctx,
+        prompt.clicks.filter((c) => inWindow(c.u, c.v)),
+        toX,
+        toY
+      );
     }
 
     const sc = selectedIdx !== null ? clicks[selectedIdx] : undefined;
@@ -2368,11 +3441,30 @@ function App() {
           ctx.arc(toX(sc.u), toY(sc.v), 14, 0, Math.PI * 2);
           ctx.stroke();
         }
+      } else if (sc.kind === "flag_mask") {
+        const b = maskBounds(sc.rings);
+        if (b && bboxInWindow(b)) {
+          ctx.strokeRect(
+            toX(b.u1) - 3,
+            toY(b.v1) - 3,
+            toX(b.u2) - toX(b.u1) + 6,
+            toY(b.v2) - toY(b.v1) + 6
+          );
+        }
       } else {
-        for (const [pu, pv] of [
-          [sc.u1, sc.v1],
-          [sc.u2, sc.v2],
-        ]) {
+        // A flag box is routinely WIDER than the zoom window (default radius 80
+        // → a 160 px window), which puts all four corners off-panel and would
+        // leave a selected box with no visible selection at all. So outline the
+        // box itself as well, AABB-gated and clipped by the canvas — same
+        // reasoning as the draw loop above.
+        if (sc.kind === "flag_box" && bboxInWindow(sc)) {
+          const left = Math.min(toX(sc.u1), toX(sc.u2));
+          const top = Math.min(toY(sc.v1), toY(sc.v2));
+          const w = Math.abs(toX(sc.u2) - toX(sc.u1));
+          const h = Math.abs(toY(sc.v2) - toY(sc.v1));
+          ctx.strokeRect(left - 3, top - 3, w + 6, h + 6);
+        }
+        for (const [pu, pv] of selectionHandles(sc)) {
           if (!inWindow(pu, pv)) continue;
           ctx.beginPath();
           ctx.arc(toX(pu), toY(pv), 12, 0, Math.PI * 2);
@@ -2381,10 +3473,28 @@ function App() {
       }
     }
 
-    // Live ghost line in the zoom panel (anchored endpoint may be off-window;
-    // canvas clips it). Cursor maps to the panel center.
+    // Live polygon ghost in the magnified panel — a small flag is traced HERE, so
+    // the outline has to be visible here. AABB-gated on the placed vertices for the
+    // same reason as committed masks: a big outline can enclose the window with no
+    // vertex inside it. Vertices outside are clipped by the canvas.
+    if (polygon.kind === "active") {
+      const b = maskBounds(polygonRings(polygon));
+      if (b && bboxInWindow(b)) {
+        drawGhostPolygon(
+          ctx,
+          polygon.vertices.map((p) => [toX(p.u), toY(p.v)] as [number, number]),
+          toX(cursor.u),
+          toY(cursor.v),
+          polygon.transect
+        );
+      }
+    }
+
+    // Live ghost line / rubber-band rect in the zoom panel (the anchored corner
+    // may be off-window; canvas clips it). Cursor maps to the panel center.
     if (pending.kind === "awaitingSecond") {
-      drawGhostLine(
+      const ghost = pending.type === "box" ? drawGhostRect : drawGhostLine;
+      ghost(
         ctx,
         toX(pending.first.u),
         toY(pending.first.v),
@@ -2418,7 +3528,17 @@ function App() {
     ctx.strokeStyle = CROSSHAIR_CORE_COLOR;
     ctx.lineWidth = 1;
     strokeReticle();
-  }, [image, clicks, cursor, zoomRadius, selectedIdx, pending]);
+  }, [
+    image,
+    clicks,
+    cursor,
+    zoomRadius,
+    selectedIdx,
+    pending,
+    polygon,
+    activeCandidate,
+    prompt,
+  ]);
 
   const mainCanvasEventToImageCoords = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>): Cursor | null => {
@@ -2455,47 +3575,6 @@ function App() {
     [image, viewScale, viewPanX, viewPanY]
   );
 
-  // Single commit path for a fully-formed annotation. Checks for a duplicate
-  // {transect, distance, kind}: if none, append + dirty + (wire-ground) auto-
-  // advance; if one exists, divert to the blocking confirm modal (no append, no
-  // dirty) and let the labeler choose replace / keep both / cancel. Reads `clicks`
-  // fresh (it's in this callback's deps) so the collision check never runs against
-  // a stale snapshot.
-  // Placing the first annotation is the aha moment: persist that this user is
-  // onboarded and drop the in-flow hint. Guarded via the ref so the store write
-  // happens exactly once, even though this fires on every successful placement.
-  const markOnboarded = useCallback(() => {
-    if (onboardedRef.current) return;
-    onboardedRef.current = true;
-    setFirstRun(false);
-    (async () => {
-      try {
-        await storeRef.current?.set(SETTINGS_KEY_ONBOARDED, true);
-        await storeRef.current?.save();
-      } catch (e) {
-        console.error("Failed to persist onboarding flag", e);
-      }
-    })();
-  }, []);
-
-  const commitAnnotation = useCallback(
-    (candidate: Annotation) => {
-      const existingIndex = findCollision(clicks, {
-        transect: candidate.transect,
-        distance: candidate.distance,
-        kind: candidate.kind,
-      });
-      if (existingIndex === null) {
-        setClicks((prev) => [...prev, candidate]);
-        setDirty(true);
-        markOnboarded();
-        return;
-      }
-      setPendingCollision({ candidate, existingIndex });
-    },
-    [clicks, markOnboarded]
-  );
-
   const addClickAt = useCallback(
     (u: number, v: number) => {
       commitAnnotation({
@@ -2522,7 +3601,13 @@ function App() {
       const spanType = SPAN_TYPE_FOR[activeType];
       if (!spanType) return;
       if (pending.kind === "awaitingSecond") {
-        const ep = canonicalizeSpan(spanType, pending.first, { u, v });
+        // A box canonicalizes to top-left/bottom-right (min/max per axis); the
+        // spans only reorder their two points. Different operations, so the
+        // branch picks the matching helper — see canonicalizeBox.
+        const ep =
+          spanType === "box"
+            ? canonicalizeBox(pending.first, { u, v })
+            : canonicalizeSpan(spanType, pending.first, { u, v });
         const candidate: Annotation = {
           kind: SPAN_KIND_FOR[spanType],
           u1: ep.u1,
@@ -2556,20 +3641,27 @@ function App() {
   const resolveCollisionReplace = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (!pendingCollision) return;
-    const { candidate, existingIndex } = pendingCollision;
+    const { candidate, existingIndex, alsoRemoveIdx } = pendingCollision;
     setClicks((prev) => [
-      ...prev.filter((_, i) => i !== existingIndex),
+      ...prev.filter((_, i) => i !== existingIndex && i !== alsoRemoveIdx),
       candidate,
     ]);
+    // Replace = filter + append, which shifts every index above existingIndex —
+    // so a live SAM3 session's targetIdx would silently point at a different
+    // annotation and Accept would write the mask onto the wrong flag.
+    endSessions();
     setDirty(true);
     setPendingCollision(null);
-  }, [pendingCollision, canEdit]);
+  }, [pendingCollision, canEdit, endSessions]);
 
   const resolveCollisionKeepBoth = useCallback(() => {
     if (!canEdit) return; // web: blocked while another labeler holds the lock
     if (!pendingCollision) return;
-    const { candidate } = pendingCollision;
-    setClicks((prev) => [...prev, candidate]);
+    const { candidate, alsoRemoveIdx } = pendingCollision;
+    setClicks((prev) => [
+      ...prev.filter((_, i) => i !== alsoRemoveIdx),
+      candidate,
+    ]);
     setDirty(true);
     setPendingCollision(null);
   }, [pendingCollision, canEdit]);
@@ -2578,6 +3670,21 @@ function App() {
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const p = mainCanvasEventToImageCoords(e);
       if (!p || !image || !containerRef.current) return;
+      // While a SAM3 session is live, a click is a REFINEMENT PROMPT, not a
+      // placement or a selection: plain = positive, ⇧ = negative. Intercepted
+      // before hit-testing so the session owns the canvas until Enter or Esc.
+      if (prompt.kind === "active") {
+        addPromptClick(p.u, p.v, e.shiftKey ? 0 : 1);
+        return;
+      }
+      // With the polygon tool up, every click is a vertex — no hit-testing, no
+      // deselect. Selecting or deleting a finished mask is the Y tool's job.
+      // Returning here also narrows `activeType` back to a real annotation kind for
+      // the hitTest call below, which cannot accept the "polygon" tool value.
+      if (activeType === "polygon") {
+        addPolygonVertex(p.u, p.v);
+        return;
+      }
       const cw = containerRef.current.clientWidth;
       const ch = containerRef.current.clientHeight;
       const { effScale } = computeViewParams(
@@ -2610,6 +3717,9 @@ function App() {
       selectedIdx,
       activeType,
       pending,
+      prompt,
+      addPromptClick,
+      addPolygonVertex,
       image,
       viewScale,
       viewPanX,
@@ -2752,6 +3862,19 @@ function App() {
       const v = sy + (zy / ZOOM_PANEL_PX) * sh;
       // Ignore clicks in the off-image black band at edges (sx/sy unclamped).
       if (u < 0 || v < 0 || u >= image.width || v >= image.height) return;
+      // Refinement prompts can be placed in the magnified panel too — that's where
+      // a distant flag is actually visible. Same polarity rule (⇧ = negative).
+      if (prompt.kind === "active") {
+        addPromptClick(u, v, e.shiftKey ? 0 : 1);
+        return;
+      }
+      // Polygon vertices can be placed in the magnified panel too — that is where a
+      // distant flag's outline is actually visible. Below the in-image bounds check
+      // above on purpose, so a click in the off-image black band adds nothing.
+      if (activeType === "polygon") {
+        addPolygonVertex(u, v);
+        return;
+      }
       // Zoom-panel effective scale: ZOOM_PANEL_PX CSS-px maps to (2*r) image-px.
       const effScale = ZOOM_PANEL_PX / (2 * r);
       const radiusImg = HIT_TEST_RADIUS_CSS_PX / effScale;
@@ -2766,25 +3889,49 @@ function App() {
       }
       placeAt(u, v);
     },
-    [image, cursor, zoomRadius, placeAt, clicks, selectedIdx, activeType, pending]
+    [
+      image,
+      cursor,
+      zoomRadius,
+      placeAt,
+      clicks,
+      selectedIdx,
+      activeType,
+      pending,
+      prompt,
+      addPromptClick,
+      addPolygonVertex,
+    ]
   );
 
   // Wire-ground L/C/R breakdown (countsFromAnnotations already filters to
   // wire-ground, so spans never inflate these counts).
   const counts = countsFromAnnotations(clicks);
   const wireGroundCount = counts.L + counts.C + counts.R;
-  // Per-span-kind tally in a single pass. Adding a new span kind extends the
-  // initial Record (compiler-enforced via Span["kind"]) without a second loop.
-  const spanCounts = clicks.reduce<Record<Span["kind"], number>>(
+  // Per-non-wire-ground-kind tally in a single pass (the three spans, the box, and
+  // the mask). Keyed on Exclude<…, "wire_ground"> rather than Span["kind"] because
+  // a mask is not a two-endpoint kind — that keeps the Record compiler-enforced
+  // over exactly the kinds this loop can see, so a new kind hard-errors here.
+  const spanCounts = clicks.reduce<
+    Record<Exclude<Annotation["kind"], "wire_ground">, number>
+  >(
     (acc, c) => {
       if (c.kind !== "wire_ground") acc[c.kind]++;
       return acc;
     },
-    { vertical_span: 0, horizontal_span: 0, flag_to_ground_span: 0 }
+    {
+      vertical_span: 0,
+      horizontal_span: 0,
+      flag_to_ground_span: 0,
+      flag_box: 0,
+      flag_mask: 0,
+    }
   );
   const verticalSpanCount = spanCounts.vertical_span;
   const horizontalSpanCount = spanCounts.horizontal_span;
   const flagToGroundSpanCount = spanCounts.flag_to_ground_span;
+  const boxCount = spanCounts.flag_box;
+  const maskCount = spanCounts.flag_mask;
 
   // Getting-started checklist progress, tracked from live app state (web only).
   const obChecklistItems = [
@@ -2895,7 +4042,7 @@ function App() {
                 <button
                   className="title-btn"
                   onClick={handleUndo}
-                  disabled={clicks.length === 0 || !canEdit}
+                  disabled={!canUndo}
                   title="Undo last click (⌘Z)"
                 >
                   <kbd>{MOD_KEY}Z</kbd>Undo
@@ -3614,16 +4761,18 @@ function App() {
               <div className="rail-section" data-tour-id="tour-tool">
                 <div className="rail-label">
                   <span>Tool</span>
-                  <span className="key-hint">Q · W · E · R</span>
+                  <span className="key-hint">
+                    {visibleTools.map((t) => t.key).join(" · ")}
+                  </span>
                 </div>
                 <div className="segmented tool-grid">
-                  {ANNOTATION_TOOLS.map((tool) => (
+                  {visibleTools.map((tool) => (
                     <button
                       key={tool.kind}
                       className={`segmented-btn ${
                         activeType === tool.kind ? "tool-active" : ""
                       }`}
-                      onClick={() => setActiveType(tool.kind)}
+                      onClick={() => selectTool(tool.kind)}
                       title={tool.title}
                       aria-pressed={activeType === tool.kind}
                     >
@@ -3633,11 +4782,120 @@ function App() {
                   ))}
                 </div>
                 <p className="tool-help" aria-live="polite">
-                  {pending.kind === "awaitingSecond"
+                  {/* A polygon keeps the transect/distance its FIRST click captured,
+                      and is deliberately NOT cancelled when the rail selection
+                      changes (losing 30 traced vertices to a stray arrow key would
+                      be hostile) — so the live hint names the captured pair, which
+                      is the only place that divergence is visible. */}
+                  {polygon.kind === "active"
+                    ? `${polygon.transect}${fmtDistance(polygon.distance)} polygon · ${
+                        polygon.vertices.length
+                      } point${polygon.vertices.length === 1 ? "" : "s"} · ${
+                        canClose(polygon)
+                          ? "↵ closes it"
+                          : `${POLYGON_MIN_VERTICES - polygon.vertices.length} more to close`
+                      } · Del undoes · Esc cancels`
+                    : pending.kind === "awaitingSecond"
                     ? "Click the second point to finish · Esc to cancel"
                     : KIND_HINT[activeType]}
                 </p>
               </div>
+
+              {/* SAM3 segmentation — the whole section, service URL included, is
+                  part of the admin-only mask tooling (see ADMIN_ONLY_TOOLS). For an
+                  admin it is always mounted so the URL is reachable before anything
+                  is selected; the session controls below only appear once a prompt
+                  is live. */}
+              {adminTools && (
+                <div className="rail-section">
+                  <div className="rail-label">
+                    <span>Segment</span>
+                    <span className="key-hint">M</span>
+                  </div>
+                  {prompt.kind === "active" ? (
+                    <>
+                      <div className="mask-candidates">
+                        {maskBusy ? (
+                          <span className="mask-status">Segmenting…</span>
+                        ) : maskCandidates.length > 0 ? (
+                          <span className="mask-status">
+                            candidate {maskCandidateIdx + 1}/{maskCandidates.length}
+                            {" · "}
+                            <span className="mono">
+                              {maskCandidates[maskCandidateIdx]?.score.toFixed(2)}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="mask-status">no candidate</span>
+                        )}
+                      </div>
+                      <div className="mask-actions">
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={cycleMaskCandidate}
+                          disabled={maskCandidates.length < 2}
+                          title="Cycle to the next candidate (C)"
+                        >
+                          <kbd>C</kbd>Cycle
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={acceptMaskCandidate}
+                          disabled={
+                            !canEdit ||
+                            maskBusy ||
+                            !activeCandidate ||
+                            activeCandidate.rings.length === 0
+                          }
+                          title="Accept this candidate as a mask (Enter)"
+                        >
+                          <kbd>↵</kbd>Accept
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={endMaskSession}
+                          title="Discard this candidate (Esc)"
+                        >
+                          <kbd>Esc</kbd>Cancel
+                        </button>
+                      </div>
+                      <p className="tool-help" aria-live="polite">
+                        Click to add a <strong>positive</strong> point ·{" "}
+                        <kbd>⇧</kbd>click for <strong>negative</strong> ·{" "}
+                        <kbd>Del</kbd> undoes the last point.{" "}
+                        {prompt.clicks.length > 0 &&
+                          `${prompt.clicks.length} point${
+                            prompt.clicks.length === 1 ? "" : "s"
+                          }.`}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="tool-help">
+                      Select a flag box (<kbd>T</kbd>) and press <kbd>M</kbd> to
+                      segment it.
+                    </p>
+                  )}
+                  {maskError && (
+                    <p className="mask-error" role="alert">
+                      {maskError}
+                    </p>
+                  )}
+                  {/* Service URL. Persisted on desktop via the settings store; on
+                      web it is per-session (there is no store there). */}
+                  <input
+                    type="text"
+                    className="sam3-url"
+                    value={sam3Url}
+                    spellCheck={false}
+                    onChange={(e) => updateSam3Url(e.currentTarget.value)}
+                    aria-label="SAM3 service URL"
+                    title="Base URL of the SAM3 service (the local end of the SSH tunnel)"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="rail-bottom">
@@ -3654,6 +4912,12 @@ function App() {
                   <span className="sep">·</span>
                   <span className="lbl">G</span>
                   <span className="mono total">{flagToGroundSpanCount}</span>
+                  <span className="sep">·</span>
+                  <span className="lbl">B</span>
+                  <span className="mono total">{boxCount}</span>
+                  <span className="sep">·</span>
+                  <span className="lbl">M</span>
+                  <span className="mono total">{maskCount}</span>
                 </div>
                 {clicks.length > 0 && (
                   <button
@@ -3674,6 +4938,7 @@ function App() {
         <KeyboardHelp
           onClose={() => setShowHelp(false)}
           appVersion={appVersion}
+          adminTools={adminTools}
           {...(!isTauri()
             ? {
                 onReplayWelcome: () => {
@@ -3888,6 +5153,7 @@ function App() {
       {!isTauri() && adminPanelOpen && account && (
         <AdminPanel
           currentEmail={account.email}
+          maskTools={maskTools}
           onClose={() => setAdminPanelOpen(false)}
         />
       )}

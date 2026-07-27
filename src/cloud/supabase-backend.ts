@@ -40,6 +40,19 @@ export async function fetchIsAdmin(): Promise<boolean> {
   return data === true;
 }
 
+// Whether the signed-in user may use the mask-annotation tools (box / SAM3 mask /
+// hand-drawn polygon). Deliberately a separate server-side flag from `is_admin` —
+// admin is a team-management role, and not every admin is running the masking
+// study. The membership table is RLS-locked with no policies, so the list of
+// enabled users is not readable through the API at all; only this SECURITY
+// DEFINER function can consult it.
+export async function fetchHasMaskTools(): Promise<boolean> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.rpc("has_mask_tools");
+  if (error) return false;
+  return data === true;
+}
+
 export class SupabaseStorageBackend implements StorageBackend {
   // Parity no-ops with TauriStorageBackend so App.tsx's existing
   // `backendRef.current.setFolder(...)` / `setClicksDir(...)` call sites

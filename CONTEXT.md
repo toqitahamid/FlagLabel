@@ -23,7 +23,7 @@ _Avoid_: ground contact, base point (use "wire–ground intersection")
 
 ### Annotation types
 
-A labeler places one of four annotation types per flag, each tagged with **transect** and **distance**, and each placed **independently** (a flag need not have all three — far-distance flags often have the base occluded but the body visible).
+A labeler places one of six annotation types per flag, each tagged with **transect** and **distance**, and each placed **independently** (a flag need not have all of them — far-distance flags often have the base occluded but the body visible).
 
 **Wire–ground intersection** (annotation):
 A single point at the base of the flag. Stored as one `{u, v}` coordinate. Keyboard: **Q**.
@@ -42,6 +42,21 @@ _Avoid_: full-height span, stake-height span, tall span (use "flag-to-ground spa
 
 **Span**:
 Umbrella term for a vertical, horizontal, or flag-to-ground span — a single, indivisible two-point calibration measurement. The two endpoints are placed sequentially (first click pins one end, a ghost line follows the cursor, second click completes it) and are always selected and deleted as a unit.
+
+**Flag box**:
+An axis-aligned rectangle the labeler **draws by hand** around one whole flag, from two clicks on opposite corners (a rubber-band rectangle follows the cursor between them). Unlike the spans it is not a calibration measurement — it is a region proposal, the input a segmentation model needs to cut the flag out of the photo. It is drawn by hand because deriving it from the points and spans does not produce a correct box: those mark specific edges and contacts, not the flag's extent. Stored as one record `{u1, v1, u2, v2}` (`u1,v1` = top-left, `u2,v2` = bottom-right, canonical regardless of click order). Keyboard: **T**. JSON array: `flag_boxes`.
+_Avoid_: bounding box, bbox, ROI, crop (use "flag box")
+
+**Flag mask**:
+A pixel-accurate outline of one flag, from one of two origins — never committed automatically in either case. Either the **SAM3 service** produces it from a flag box and the labeler **accepts** it, or the labeler **traces it by hand** with the polygon tool (the fallback for flags too small, far, or low-contrast for the model). Like the flag box it is not a calibration measurement; it is the segmentation the distance pipeline consumes. Stored as one record `{rings, score}`: `rings` is a list of closed rings (a mask can be split or holed, so it is a list, not one ring), each ring a list of `[u, v]` vertices rounded to 1 decimal. `score` is the model's confidence, or exactly `1` for a hand-traced outline — that is how a consumer tells the two origins apart. A segmented mask inherits the source box's transect and distance; a hand-traced one captures them at its first click. Keyboard: **M** to segment, **P** to trace by hand, **Y** to select a committed one. JSON array: `flag_masks`.
+_Avoid_: segmentation, contour, silhouette (use "flag mask"). "Polygon" names only the **tool** and the in-progress outline, never a committed annotation — that is a flag mask.
+
+**Candidate**:
+One of up to three ranked masks the service returns for a single prompt. They exist because at distance a flag can be smaller than one mask cell, so the correct granularity is genuinely ambiguous — the labeler cycles and chooses. A candidate is not an annotation until accepted.
+
+**Refinement point** (also **prompt click**):
+A transient positive or negative click that tells the model "this is / is not the flag", added to a live segmentation prompt to correct a candidate. Purely prompt state — refinement points are resent in full on every request and are **never persisted**.
+_Avoid_: hint, seed, marker (use "refinement point")
 
 ### Coordinates & grouping
 
