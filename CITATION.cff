@@ -1,0 +1,66 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "FlagLabel: Annotation Tool for Camera-Trap Calibration Flags"
+abstract: >-
+  FlagLabel is a keyboard-driven annotation tool for distance-flag calibration
+  in wildlife camera-trap surveys. Annotators mark where each numbered flag's
+  wire meets the ground, spans across the flag body, flag boxes, and flag masks
+  (SAM3-assisted or hand-drawn polygons), each tagged with its transect and
+  distance. Each image produces one JSON file (schema v2) of image-pixel
+  coordinates for downstream camera calibration and distance estimation. It
+  runs as a desktop app (macOS, Windows) and as a web app.
+type: software
+version: 0.4.0
+date-released: "2026-06-05"
+license: MIT
+repository-code: "https://github.com/toqitahamid/FlagLabel"
+url: "https://flaglabel.vercel.app"
+keywords:
+  - camera traps
+  - distance sampling
+  - camera calibration
+  - image annotation
+  - wildlife monitoring
+  - computer vision
+authors:
+  - family-names: Sarker
+    given-names: Toqi Tahamid
+    orcid: "https://orcid.org/0000-0003-2482-8059"
+    affiliation: Southern Illinois University Carbondale
+  - family-names: Islam
+    given-names: Taminul
+    orcid: "https://orcid.org/0000-0002-7803-4564"
+    affiliation: Southern Illinois University Carbondale
+  - family-names: Morelock
+    given-names: Seth J.
+    orcid: "https://orcid.org/0009-0003-1657-1895"
+    affiliation: Southern Illinois University Carbondale
+  - family-names: Bastille-Rousseau
+    given-names: Guillaume
+    orcid: "https://orcid.org/0000-0001-6799-639X"
+    affiliation: Southern Illinois University Carbondale
+  - family-names: Ahmed
+    given-names: Khaled R.
+    orcid: "https://orcid.org/0000-0002-3707-4316"
+    affiliation: Southern Illinois University Carbondale
+references:
+  - type: conference-paper
+    title: "Reference-Conditioned Distance Intervals on Unseen Camera Traps"
+    year: 2026
+    collection-title: "Computer Vision for Ecology Workshop, European Conference on Computer Vision (ECCV)"
+    authors:
+      - family-names: Sarker
+        given-names: Toqi Tahamid
+        orcid: "https://orcid.org/0000-0003-2482-8059"
+      - family-names: Islam
+        given-names: Taminul
+        orcid: "https://orcid.org/0000-0002-7803-4564"
+      - family-names: Morelock
+        given-names: Seth J.
+        orcid: "https://orcid.org/0009-0003-1657-1895"
+      - family-names: Bastille-Rousseau
+        given-names: Guillaume
+        orcid: "https://orcid.org/0000-0001-6799-639X"
+      - family-names: Ahmed
+        given-names: Khaled R.
+        orcid: "https://orcid.org/0000-0002-3707-4316"
