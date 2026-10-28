@@ -4,6 +4,7 @@ version = "0.4.0"
 description = "Keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys."
 authors = ["Toqi Tahamid Sarker"]
 edition = "2021"
+license = "MIT"
 repository = "https://github.com/toqitahamid/FlagLabel"
 homepage = "https://github.com/toqitahamid/FlagLabel"
 
