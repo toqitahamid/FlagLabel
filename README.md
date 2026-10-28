@@ -1,71 +1,81 @@
 # FlagLabel
 
-A fast, keyboard-driven desktop labeler for distance-flag calibration in wildlife camera-trap surveys.
+A keyboard-driven annotation tool for distance-flag calibration in wildlife camera-trap surveys.
 
-Researchers running camera-trap distance sampling place numbered flags along three transects (Left, Center, Right) at known distances, then need to mark exactly where each flag's wire meets the ground in every reference photo. FlagLabel makes that the entire app: open an image, pick a transect, tap a distance, click the wire–ground intersection. You can also mark the flag's known physical dimensions in pixels — a vertical or horizontal span across the flag body, or a flag-to-ground span from the flag top down to the wire base — giving downstream code several pixel-per-centimeter references for distance calibration. The 360 px zoom panel lets you place every point to sub-pixel precision; folder mode walks a whole site of photos without ever leaving the keyboard.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.4.0-informational.svg)](https://github.com/toqitahamid/FlagLabel/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Web-lightgrey.svg)](#installation)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
+[![Web app](https://img.shields.io/badge/web%20app-flaglabel.vercel.app-34a382.svg)](https://flaglabel.vercel.app)
 
-Each image becomes one small JSON file with image-pixel coordinates for every annotation, the transect/distance you tagged, and the flag's known real-world dimensions, ready for downstream camera-calibration code.
+## Overview
 
-Available for macOS (Apple Silicon) and Windows (x64). ~5 MB installer.
+Camera-trap distance sampling needs to know how far an animal is from the camera. To calibrate each trail camera, researchers place numbered flags at known ground distances along three transects (Left, Center, Right) in front of the camera and take reference photos. Marking exactly where each flag's wire meets the ground in those photos ties image pixels to known metric distances, which downstream code uses for camera calibration and distance estimation.
 
----
+FlagLabel is built for that one task. Open an image, pick a transect, set a distance, and click the wire–ground intersection. You can also mark the flag's known physical dimensions in pixels: a vertical or horizontal span across the flag body, or a flag-to-ground span from the flag top down to the wire base. These give downstream code several pixel-per-centimeter references for distance calibration. A 360 px zoom panel supports sub-pixel placement, and folder mode steps through a whole site of photos from the keyboard.
 
-## Install
+Each image produces one small JSON file with image-pixel coordinates for every annotation, the transect and distance tagged on each, and the flag's known real-world dimensions.
 
-Grab the latest installer from the [Releases](https://github.com/toqitahamid/FlagLabel/releases) page.
+FlagLabel was used to produce the [camtrap-distance-flags](https://huggingface.co/datasets/toqi/camtrap-distance-flags) dataset.
+
+## Features
+
+- Annotation types, each tagged with a transect (`L`/`C`/`R`) and a distance in meters:
+  - wire–ground (ground-contact) points, one click each
+  - flag-body spans: vertical, horizontal, and flag-to-ground (two clicks each)
+  - boxes around the whole flag
+  - masks, either proposed by an optional SAM3 segmentation service or traced by hand as polygons
+- Keyboard-driven: every tool, transect, distance step, and navigation action has a shortcut.
+- 360 px zoom panel at fixed magnification; span endpoints, box corners, and polygon vertices can be placed on either the main image or the zoom panel.
+- Folder mode with per-image annotation counts, so you can see how much of a batch is done.
+- Auto-save 5 s after the last edit; re-opening an image reloads its saved annotations.
+- One JSON file per image (schema v2) with image-pixel coordinates.
+- Desktop app for macOS (Apple Silicon) and Windows (x64), about a 5 MB installer, with automatic updates. A web build with a shared central dataset is also available.
+
+## Installation
+
+### Desktop (macOS and Windows)
+
+Download the latest installer from the [Releases](https://github.com/toqitahamid/FlagLabel/releases) page.
 
 **macOS** (Apple Silicon): `FlagLabel_<version>_aarch64.dmg`
 
 1. Open the `.dmg` and drag `FlagLabel.app` into `/Applications`.
-2. Remove the quarantine flag macOS adds to anything downloaded from the web:
+2. Remove the quarantine attribute (see the note below).
+3. Double-click to open.
 
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/FlagLabel.app
-   ```
-
-   Without this, macOS will refuse to open the app with *"FlagLabel is damaged and can't be opened"* — FlagLabel isn't notarized with an Apple Developer ID, so Gatekeeper blocks it on first launch.
-
-3. Double-click to open. If you skipped step 2, you can still launch it via **System Settings → Privacy & Security → Open Anyway** after the block dialog appears.
+> **macOS: first launch**
+>
+> FlagLabel is not notarized with an Apple Developer ID, so Gatekeeper blocks it on first launch with "FlagLabel is damaged and can't be opened". Remove the quarantine attribute macOS adds to downloaded files:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/FlagLabel.app
+> ```
+>
+> If you skipped this step, you can still launch the app from **System Settings → Privacy & Security → Open Anyway** after the block dialog appears.
 
 **Windows** (x64): `FlagLabel_<version>_x64-setup.exe` or `FlagLabel_<version>_x64_en-US.msi`
 
-1. Run the installer. SmartScreen may warn that the publisher is unknown — click **More info → Run anyway**.
+1. Run the installer. SmartScreen may warn that the publisher is unknown. Click **More info → Run anyway**.
 2. The app installs to `%LOCALAPPDATA%\FlagLabel` and adds a Start-menu shortcut.
 
-Updates install automatically — when a new version is published, FlagLabel will prompt you on next launch.
+Updates install automatically. When a new version is published, FlagLabel prompts you on the next launch.
 
----
+### Web
 
-## Workflow
+The web build runs at [flaglabel.vercel.app](https://flaglabel.vercel.app). It stores images and annotations in a shared central dataset so several labelers can work on the same project without installing anything. Sign-in is by a one-time code sent to your email, and accounts are created by an administrator. The desktop app works offline, needs no account, and reads images from a local folder.
 
-1. **⌘O** to open a single image, or **⌘⇧O** to open a folder and step through it with `←` / `→`.
-2. Pick what to mark with **Q / W / E / R / T / Y / P** (or the rail buttons): a **wire–ground point** (`Q`, the default); a **vertical** (`W`), **horizontal** (`E`), or **flag-to-ground** (`R`) span; a **box** (`T`) around the whole flag; an accepted **mask** (`Y`, for selecting one — SAM3 masks are created from a box, see below); or a hand-drawn **polygon** (`P`), which produces a mask by tracing.
-   > The **box**, **mask** and **polygon** tools (`T` / `Y` / `P`, and the `M` / `C` mask keys) are granted per user on the web build — not by the admin role. Someone who already has them can grant or revoke access in **Manage users**; the change takes effect the next time the person loads FlagLabel. Boxes and masks already saved in a file stay visible and are preserved on save for everyone.
-3. Pick a transect: **L / C / R** (or buttons `1 / 2 / 3`), and set distance with the number input or **↑ / ↓** (hold shift for 0.5 m steps).
-4. Place the annotation:
-   - **Wire–ground point** — one click at the wire–ground intersection. A colored dot + label (e.g. `L1`) appears on the main image and in the zoom panel.
-   - **Spans** — two clicks: the first pins one end, a ghost line follows the cursor, the second completes it. Endpoints can land on either the main image or the zoom panel; **Esc** cancels a half-placed span. Each flag carries the spans independently, so far flags can hold only the ones still visible.
-   - **Box** — two clicks on opposite corners, with a live rubber-band rectangle in between. Either corner can go first; the box is stored top-left → bottom-right regardless. Corners can land on either the main image or the zoom panel, and **Esc** cancels a half-drawn box.
-   - **Mask** — not clicked directly. Select a box you've drawn and press **M**; the SAM3 service segments the flag inside it and proposes up to three candidate masks. Press **C** to cycle candidates, click to add a positive refinement point (**⇧click** for negative, **Del** to undo the last one), and **Enter** to accept. **Esc** discards without saving anything. The accepted mask inherits the box's transect and distance, and the prompt box is deleted automatically — the mask replaces it. (To re-mask a flag later, draw a fresh box.) See [Mask segmentation](#mask-segmentation-sam3).
-   - **Polygon** — the manual fallback for flags SAM3 can't segment (too small, too far, too low-contrast). Press **P**, then click the flag's outline vertex by vertex; a solid line joins the placed vertices while a dashed segment follows the cursor and a dashed hint shows where the outline would close. **Enter** closes it (3 vertices minimum) into a mask, **Del** / **⌫** removes the last vertex, and **Esc** discards the whole outline. Vertices can land on either the main image or the zoom panel — the panel is usually where a distant flag's edge is actually visible. The transect and distance are captured on the **first** click and kept for the whole outline, so changing the rail selection mid-trace won't retag it; the rail hint shows the pair it will commit with. Hand-drawn masks are stored exactly like segmented ones, but always with `"score": 1` (see [Output format](#output-format)).
-5. **⌘S** to save, or just keep working — annotations auto-save 5 s after the last edit. The first save asks for a folder; that folder is remembered.
+## Usage
 
-Re-opening an image whose JSON already exists in the saved folder auto-loads the previous annotations. In folder mode, the sidebar shows per-image annotation counts so you can see at a glance how much of the batch is done.
+1. Open a single image (**⌘O**) or a folder (**⌘⇧O**) and step through it with **←** / **→**.
+2. Pick an annotation type: **Q** wire–ground point (default), **W** vertical span, **E** horizontal span, **R** flag-to-ground span, **T** box, **Y** mask, **P** hand-drawn polygon.
+3. Pick a transect with **1** / **2** / **3** (L / C / R) and set the distance with the number input or **↑** / **↓** (hold **⇧** for 0.5 m steps).
+4. Place the annotation: one click for a point, two clicks for a span or box, or vertex-by-vertex clicks for a polygon.
+5. Save with **⌘S**, or keep working: annotations auto-save 5 s after the last edit. The first save asks for a folder, which is remembered.
 
-### Editing existing annotations
+The [user guide](docs/user-guide.md) covers each annotation type, editing existing annotations, zoom and pan, and per-user tool access on the web build.
 
-Click on a placed marker or span to select it. While selected:
-
-- **1 / 2 / 3** re-tags it to L / C / R.
-- **↑ / ↓** (with ⇧ for 0.5 m) nudges its distance.
-- **Delete** / **Backspace** removes it.
-- **Esc** clears the selection.
-
-### Zoom and pan
-
-The main image supports trackpad pinch or mouse wheel to zoom around the cursor, and **Space + drag** (or middle-mouse drag) to pan. The 360 px zoom panel on the right stays at its own fixed magnification for precision clicking.
-
-### Keyboard cheatsheet
+### Keyboard shortcuts
 
 | Key | Action |
 |-----|--------|
@@ -90,15 +100,11 @@ The main image supports trackpad pinch or mouse wheel to zoom around the cursor,
 | Space (drag) | Pan main image |
 | ? or ⌘/ | Toggle keyboard help overlay |
 
-Shortcuts that aren't ⌘O/⌘S are ignored while the distance input is focused, so you can type freely.
-
-On Windows, swap **⌘** for **Ctrl** in every shortcut above.
-
----
+Shortcuts other than ⌘O and ⌘S are ignored while the distance input is focused, so you can type freely. On Windows, use **Ctrl** in place of **⌘**.
 
 ## Output format
 
-One JSON file per image, saved as `<site>__<imagestem>.json` in the folder you choose on first save:
+FlagLabel writes one JSON file per image, saved as `<site>__<imagestem>.json` in the folder you choose on first save:
 
 ```json
 {
@@ -140,32 +146,99 @@ One JSON file per image, saved as `<site>__<imagestem>.json` in the folder you c
 }
 ```
 
-All coordinates are image pixels with the origin at the top-left. `wire_ground_points` each hold a single click `u`/`v`; the three span arrays each hold two endpoints, `u1`/`v1` → `u2`/`v2`. `flag_boxes` uses the same two-point shape, where `u1`/`v1` is the box's **top-left** corner and `u2`/`v2` its **bottom-right** — always in that order, whichever corner was clicked first. `flag_masks` is the one array with a different geometry: `rings` is a **list of closed rings** (a mask can be split into several pieces, or have a hole), each ring a list of `[u, v]` vertices rounded to 1 decimal, plus a `score`. `score` is the model's confidence for an accepted SAM3 candidate, and is **exactly `1`** for a hand-drawn polygon (`P`) — SAM3 scores are below 1 in practice, so `score == 1` is how a downstream consumer tells a traced outline from a segmented one. A hand-drawn mask always has a single ring. Every annotation carries its own `transect` (`L`/`C`/`R`) and `distance` (meters), and any array can be empty. `reference_dimensions_cm` records the flag's known real-world sizes (centimeters) so calibration code can turn pixel spans into a distance estimate; `site` is the parent folder name of the source image.
+- All coordinates are image pixels with the origin at the top-left.
+- `wire_ground_points` each hold a single click, `u`/`v`.
+- The three span arrays (`flag_vertical_spans`, `flag_horizontal_spans`, `flag_to_ground_spans`) each hold two endpoints, `u1`/`v1` → `u2`/`v2`.
+- `flag_boxes` uses the same two-point shape. `u1`/`v1` is always the top-left corner and `u2`/`v2` the bottom-right, whichever corner was clicked first.
+- `flag_masks` has a different geometry. `rings` is a list of closed rings (a mask can be split into several pieces or have a hole); each ring is a list of `[u, v]` vertices rounded to 1 decimal. `score` is the model's confidence for an accepted SAM3 candidate and is exactly `1` for a hand-drawn polygon. SAM3 scores are below 1 in practice, so `score == 1` identifies a traced outline. A hand-drawn mask always has a single ring.
+- Every annotation carries its own `transect` (`L`/`C`/`R`) and `distance` (meters). Any array can be empty.
+- `reference_dimensions_cm` records the flag's known real-world sizes in centimeters, so calibration code can turn pixel spans into a distance estimate.
+- `site` is the parent folder name of the source image.
 
-> **Schema v2** (FlagLabel 0.2.0+). Files written before that used a single `clicks` array with a `click_type` field; v0.2.0 dropped support and treats those as empty.
->
-> `flag_boxes` and `flag_masks` were both added later as purely **additive** keys, with no version bump: files written before them simply lack the arrays and still load, and a reader that only knows the four original arrays can ignore the new keys safely. `schema_version` is reserved for a breaking layout change.
+**Schema versions.** Schema v2 was introduced in FlagLabel 0.2.0. Files written before that used a single `clicks` array with a `click_type` field; 0.2.0 dropped support for them and treats them as empty. `flag_boxes` and `flag_masks` were added later as additive keys with no version bump: older files without them still load, and a reader that only knows the four original arrays can ignore the new keys. `schema_version` is reserved for a breaking layout change. See [ADR 0001](docs/adr/0001-clicks-json-schema-v2-span-annotations.md) for the design record.
 
----
+## Optional: SAM3 mask segmentation
 
-## Mask segmentation (SAM3)
+Mask suggestions are optional. They need a SAM3 segmentation service running on a separate GPU server, reached over an SSH tunnel; FlagLabel never runs a model itself. All other annotation types, including hand-drawn polygon masks, work without it.
 
-Masks come from a SAM3 segmentation service running on a GPU box, reached over an SSH tunnel — the app never runs a model itself. Set the tunnel up so the service is reachable locally:
+Set up the tunnel so the service is reachable locally:
 
-```
+```bash
 ssh -N -L 8765:127.0.0.1:8765 <gpu-host>
 ```
 
 The app defaults to `http://127.0.0.1:8765`. If your tunnel uses a different port, change the URL in the **Segment** section of the right rail; on desktop it is remembered between launches.
 
-With the tunnel up: draw a flag box (**T**), select it, and press **M**. The app uploads the image once per photo (the embedding is cached and reused for every box in that photo), then asks for masks inside the box. Up to three candidates come back, ranked — at 15 m a flag can be smaller than a single mask cell, so which blob *is* the flag is genuinely ambiguous and you choose rather than the app guessing. Refine with clicks, then **Enter** to accept.
+With the tunnel up, draw a flag box (**T**), select it, and press **M**. The app uploads the image once per photo (the embedding is cached and reused for every box in that photo), then asks for masks inside the box. Up to three ranked candidates come back. At 15 m a flag can be smaller than a single mask cell, so which blob is the flag is ambiguous, and you choose rather than the app guessing. Refine with clicks, then press **Enter** to accept.
 
-If the service restarts mid-session the app re-uploads the image and retries once, so you shouldn't notice. If it can't be reached at all, the rail says so — check the tunnel.
+If the service restarts mid-session, the app re-uploads the image and retries once. If it cannot be reached at all, the rail says so; check the tunnel.
 
-When segmentation just won't find the flag — or the service isn't available at all — trace the outline by hand with the polygon tool (**P**) instead. It writes the same `flag_masks` entry, marked with `"score": 1`.
+When segmentation does not find the flag, or the service is not available, trace the outline by hand with the polygon tool (**P**). It writes the same `flag_masks` entry, marked with `"score": 1`.
 
----
+## Development
+
+FlagLabel is a [Tauri 2](https://tauri.app) desktop app with a React and TypeScript frontend built with Vite. The same frontend is deployed as the web build, backed by Supabase.
+
+Prerequisites:
+
+- Node.js (CI uses Node 20) and npm
+- Rust (stable) and the [Tauri prerequisites](https://tauri.app/start/prerequisites/) for your platform, for the desktop app
+
+Commands:
+
+```bash
+npm install          # install dependencies
+npm run dev          # Vite dev server for the frontend (http://localhost:1420)
+npm run build        # type-check and build the frontend into dist/
+npm test             # run the Vitest test suite
+npm run tauri dev    # run the desktop app in development mode
+npm run tauri build  # build desktop installers
+```
+
+The web build reads `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` at build time. Copy [`.env.example`](.env.example) to `.env.local` and fill in the values from the Supabase project's API settings. The desktop app does not use these.
+
+Design records for the annotation schema, the web target, and web authentication are in [docs/adr](docs/adr). Release notes are in [CHANGELOG.md](CHANGELOG.md).
+
+## Related resources
+
+- [CamTrap Measure](https://github.com/toqitahamid/camtrap-measure) uses FlagLabel annotations.
+- [camtrap-distance](https://github.com/toqitahamid/camtrap-distance): code for the paper "Reference-Conditioned Distance Intervals on Unseen Camera Traps".
+- [camtrap-distance-flags](https://huggingface.co/datasets/toqi/camtrap-distance-flags): the flag annotation dataset produced with FlagLabel.
 
 ## Reporting issues
 
-Bug reports and feature requests are welcome on the [issue tracker](https://github.com/toqitahamid/FlagLabel/issues). Please include your OS version, FlagLabel version (shown in the menu bar → FlagLabel → About), and a screenshot or sample image if the bug is visual.
+Bug reports and feature requests are welcome on the [issue tracker](https://github.com/toqitahamid/FlagLabel/issues). Please include your OS version, your FlagLabel version (shown under menu bar → FlagLabel → About), and a screenshot or sample image if the bug is visual.
+
+## Citation
+
+If you use FlagLabel, please cite the software. Citation metadata is also in [CITATION.cff](CITATION.cff).
+
+```bibtex
+@software{sarker2026flaglabel,
+  title   = {FlagLabel: Annotation Tool for Camera-Trap Calibration Flags},
+  author  = {Sarker, Toqi Tahamid and Islam, Taminul and Morelock, Seth J. and Bastille-Rousseau, Guillaume and Ahmed, Khaled R.},
+  year    = {2026},
+  version = {0.4.0},
+  url     = {https://github.com/toqitahamid/FlagLabel},
+  license = {MIT}
+}
+```
+
+The accompanying paper:
+
+```bibtex
+@inproceedings{sarker2026reference,
+  title     = {Reference-Conditioned Distance Intervals on Unseen Camera Traps},
+  author    = {Sarker, Toqi Tahamid and Islam, Taminul and Morelock, Seth J. and Bastille-Rousseau, Guillaume and Ahmed, Khaled R.},
+  booktitle = {Computer Vision for Ecology Workshop, European Conference on Computer Vision (ECCV)},
+  year      = {2026}
+}
+```
+
+## License
+
+FlagLabel is released under the [MIT License](LICENSE).
+
+## Acknowledgments
+
+FlagLabel was developed at Southern Illinois University Carbondale. Mask suggestions use a separately hosted [SAM 3](https://github.com/facebookresearch/sam3) segmentation service.
