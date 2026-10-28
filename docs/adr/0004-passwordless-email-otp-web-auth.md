@@ -78,7 +78,7 @@ Realtime locks) is unchanged.
   (and seeds `app_roles`), then the labeler signs in with their email + the
   emailed code. No password handoff.
 - **Deploy ordering is load-bearing.** Pushing this code to `main` auto-deploys
-  the web app (see CLAUDE.md). If the Magic Link template still sends a *link*
+  the web app. If the Magic Link template still sends a *link*
   when the OTP-only build goes live, every login is dead and there is no password
   fallback. So the **template must be switched to the code first**, then verified,
   then the code deployed. Changing the template ahead of the deploy is safe — the

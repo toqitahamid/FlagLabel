@@ -35,7 +35,7 @@ project URL + anon key as build-time env vars.
 - **Row-Level Security (RLS)** — **on, as a hard requirement.** The anon key is
   public by design; RLS is the actual data gate (authenticated team members only).
 - **Storage** — image files mirrored as `photos/<camera>/IMG_xxxx.JPG`, preserving
-  the `cam0X` folder names so `site` = camera (see CONTEXT.md). At ~680 KB/image
+  the `cam0X` folder names so `site` = camera. At ~680 KB/image
   and a couple hundred images (~150 MB), this fits the Supabase **free tier**.
 - **Postgres** — annotation storage, **hybrid model**: the schema-v2 object is
   stored verbatim as a `jsonb` blob (the single source of truth, built/parsed by
